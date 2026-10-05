@@ -92,7 +92,9 @@ Metric :: struct {
     loading: bool;
 }
 
-METRIC_STRIP_HEIGHT :: 64.0;
+METRIC_STRIP_HEIGHT :: 80.0;
+// Label, value and detail rows, top to bottom, centered in the strip.
+METRIC_CONTENT_HEIGHT :: 60.0;
 
 draw_metric_strip :: (r: Rect, metrics: [] Metric, id_base: string) {
     strip := snap(r);
@@ -112,21 +114,21 @@ draw_metric_strip :: (r: Rect, metrics: [] Metric, id_base: string) {
     for m, i: metrics {
         cell := rect(strip.x + i * cell_w, strip.y, cell_w, strip.h);
         if i > 0 ui_vdivider(cell.x, cell.y + px(10), cell.h - px(20), theme.border);
-        inner := rect_inset_xy(cell, px(14), px(9));
+        inner := rect_inset_xy(cell, px(16), floor((cell.h - px(METRIC_CONTENT_HEIGHT)) * 0.5));
         cid := ui_id(id_base, i);
         if m.tooltip.count {
             io := ui_interact(cid, cell);
             ui_tooltip(cid, io.hovered, m.tooltip);
         }
         draw_caps(rect(inner.x, inner.y, inner.w, px(12)), m.label, theme.text_muted);
-        value_r := rect(inner.x, inner.y + px(14), inner.w, px(26));
+        value_r := rect(inner.x, inner.y + px(16), inner.w, px(26));
         if m.loading {
             draw_skeleton(rect(value_r.x, value_r.y + px(6), min(px(110), value_r.w * 0.7), px(14)), i * 0.15);
         } else {
             vw := draw_rolling_text(ui_id_combine(cid, 0x77), fonts.numeric, size, value_r, fit_text(fonts.numeric, size, m.value, value_r.w, .{tabular = true}),
                                     ifx m.value_color then m.value_color else theme.text, .LEFT, ifx m.roll_up then 1.0 else -1.0, .{tabular = true});
         }
-        detail_r := rect(inner.x, inner.y + px(40), inner.w, px(14));
+        detail_r := rect(inner.x, inner.y + px(45), inner.w, px(15));
         if m.delta.count {
             arrow_color := ifx m.delta_good > 0 then theme.positive else ifx m.delta_good < 0 then theme.held else theme.text_muted;
             draw_icon(ifx m.delta_up then Icon.ARROW_UP else .ARROW_DOWN, detail_r.x + px(5), detail_r.y + detail_r.h * 0.5, px(9), arrow_color);
@@ -430,10 +432,10 @@ draw_field :: (r: Rect, label: string, value: string, mono := false, value_color
 }
 
 // Toolbar strip under the tab bar: a quiet band that holds a page's controls.
-TOOLBAR_HEIGHT :: 44.0;
+TOOLBAR_HEIGHT :: 52.0;
 
 toolbar_rect :: (r: *Rect) -> Rect {
     bar := cut_top(r, px(TOOLBAR_HEIGHT));
-    return rect_inset_xy(bar, 0, px(8));
+    return rect_inset_xy(bar, 0, px(10));   // Controls 32 tall, 10 above and below.
 }
 

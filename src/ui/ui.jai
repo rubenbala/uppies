@@ -627,9 +627,11 @@ ui_slider :: (label: string, r: Rect, value: *float, lo: float, hi: float, value
 // highlight glides between segments.
 //
 
+SEGMENT_PADDING :: 26.0;   // Horizontal space around each segment's label.
+
 ui_segmented_width :: (options: [] string) -> float {
-    w := px(2);
-    for options w += measure_text(fonts.semibold, px(theme.font_size_label), it) + px(20);
+    w := px(4);
+    for options w += measure_text(fonts.semibold, px(theme.font_size_label), it) + px(SEGMENT_PADDING);
     return w;
 }
 
@@ -651,10 +653,10 @@ ui_segmented :: (label: string, r_in: Rect, options: [] string, selected: *int) 
     natural: float;
     n := min(options.count, widths.count);
     for 0..n - 1 {
-        widths[it] = measure_text(fonts.semibold, px(theme.font_size_label), options[it]) + px(20);
+        widths[it] = measure_text(fonts.semibold, px(theme.font_size_label), options[it]) + px(SEGMENT_PADDING);
         natural += widths[it];
     }
-    inner := rect_inset(r, px(1));
+    inner := rect_inset(r, px(2));
     scale := inner.w / max(natural, 1.0);
     for 0..n - 1 widths[it] *= scale;
 
@@ -670,7 +672,7 @@ ui_segmented :: (label: string, r_in: Rect, options: [] string, selected: *int) 
     for 0..i0 - 1 x0 += widths[it];
     for 0..i1 - 1 x1 += widths[it];
     thumb := rect(lerp(x0, x1, f), inner.y, lerp(widths[i0], widths[i1], f), inner.h);
-    draw_rect_outline(snap(thumb), theme.active, theme.border_strong, hairline(), radius - px(1));
+    draw_rect_outline(snap(thumb), theme.active, theme.border_strong, hairline(), radius - px(2));
 
     x := inner.x;
     for 0..n - 1 {
