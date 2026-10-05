@@ -1,0 +1,127 @@
+# Uppies architecture
+
+## Layout
+
+```
+build.jai                    Build metaprogram (debug / release / run); compiles HLSL to bytecode
+src/main.jai                 Entry point, frame loop, frame clock
+src/core/                    Rects and rect cutting, sRGB colors, damping, springs, easing
+src/platform/                Window, input, cursor, OS services
+    platform.jai             The platform API + shared input state (OS independent)
+    platform_windows.jai     Win32 implementation
+src/render/                  Everything that turns a frame into pixels
+    draw.jai                 The draw list: one 96-byte instance per primitive
+    font.jai                 FreeType glyph cache + shelf-packed atlas
+    renderer.jai             Backend interface, stats, settings
+    d3d11/                   Direct3D 11 backend + its shader (ui.hlsl)
+src/ui/                      Immediate-mode widgets, retained animation state, theme
+src/app/                     The screens
+data/                        Mirrored next to the exe (fonts go in data/fonts/)
+```
+
+Layering is strictly downward: `app` uses `ui`, `render`, `platform` and `core`; `render`
+never knows about widgets; nothing below `platform` knows about the OS.
+
+## Frame loop
+
+`main` in `main.jai`:
+
+1. Pump OS messages.
+2. If nothing wants a frame, **sleep in the OS** (`MsgWaitForMultipleObjectsEx`) until a
+   message arrives. A frame is wanted when input arrived (`platform.needs_redraw`), for one
+   frame after input (immediate-mode UIs settle a frame later), while any animation is
+   moving (`ui.animating`), or in continuous mode. An idle window uses no CPU or GPU.
+3. Wait on the swap chain's **frame latency waitable** (maximum latency 1): block until the
+   display can take a new frame.
+4. Pump again, so input that arrived during the wait makes this frame.
+5. `run_frame`: build the UI (which fills the draw list), one upload, one draw, present.
+
+Waiting *before* reading input means a frame shows input at most one refresh old. Every
+wait is paired with a present, or the swap chain's latency accounting drifts.
+
+`dt` is measured, clamped to 100 ms, and after sleeping assumed to be one refresh (the
+gap since the last frame says nothing about the next). Animations use `damp` (exponential,
+frame-rate independent) or `Spring` (sub-stepped, stable at any frame time), so motion is
+identical at 60 Hz and 360 Hz.
+
+Win32 runs a modal loop while the window is dragged or resized. During it, a timer and
+`WM_SIZE` call `platform.modal_frame`, so content keeps animating and redraws at the new
+size live.
+
+## Rendering
+
+The whole UI is **one instanced draw call** with no vertex or index buffer:
+
+- Every primitive is a `Draw_Instance` (96 bytes): rect, corner radii, clip rect, two fill
+  colors (vertical gradient), border color and width, kind, and an atlas rect for glyphs.
+- The vertex shader expands each instance into a quad from `SV_VertexID`, grown by a pixel
+  for antialiasing (or by 3 sigma for shadows), and **clips it on the GPU** by shrinking the
+  quad to the clip rect, so clipping never splits the batch and clipped pixels are never shaded.
+- The pixel shader evaluates a signed distance function: rounded boxes with per-corner
+  radii and borders, an analytic **Gaussian shadow** of a rounded box (closed-form along x,
+  4 samples along y), or a glyph's coverage. Gradients are dithered against banding.
+- Colors are sRGB and blended in sRGB like browsers and design tools; text coverage gets a
+  luminance-dependent correction so light-on-dark text isn't thin.
+- Output is premultiplied alpha. Painter's order = submission order.
+
+Per frame the CPU sends the instance array (`Map(WRITE_DISCARD)`, no stall) plus only the
+atlas rows new glyphs touched. Shaders are compiled at **build time** (`build.jai` →
+`D3DCompile`) and embedded as byte arrays: no runtime shader compiler, no startup compile,
+shader errors are build errors.
+
+Presentation: flip-model swap chain (`FLIP_DISCARD`, two buffers, `DXGI_SCALING_NONE`),
+frame latency waitable, `ALLOW_TEARING` when vsync is off (uncapped and VRR), no GDI
+redirection surface (`WS_EX_NOREDIRECTIONBITMAP`). The first frame is rendered before the
+window is shown, so it never flashes white. A lost device (driver update, TDR) is
+recreated from CPU-side state.
+
+Why D3D11 and not D3D12: D3D12's advantages are cheap submission of many draws and explicit
+multithreading. At one draw per frame neither applies, while presentation, which does
+matter, is identical (same DXGI). The backend sits behind a five-procedure interface
+(`renderer.jai`), so a D3D12, Metal or Vulkan backend consumes the same draw list.
+
+## Text
+
+`font.jai`: FreeType rasterizes glyphs on demand at the **exact pixel size** they are drawn
+at (light hinting, grayscale AA), into one R8 atlas packed in shelves. Glyphs are cached
+per (font, pixel size, code point), each with **four horizontal subpixel positions**, so
+text uses the font's true advances while every glyph lands on whole pixels. Kerning comes
+from the font's `kern` table when it has one. The atlas grows (1024 → 4096) without moving
+glyphs; if it ever fills, it is cleared at the start of the next frame, never mid-frame.
+A DPI change clears the cache so glyphs re-rasterize at the new sizes.
+
+Fonts: `data/fonts/ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf` if present (Inter is
+a good choice), otherwise Segoe UI from the system.
+
+## UI
+
+`ui.jai` is immediate mode: widgets are procedures called each frame with a rectangle that
+draw themselves and return what happened (`ui_button` → clicked, `ui_toggle` / `ui_slider` →
+changed). Only animation state is retained, in a table keyed by a hash of the widget's
+label (text after `##` is id-only), and dropped when a widget isn't drawn for a while.
+
+Layout is **rect cutting** (`cut_top`, `cut_left`, ... in `core/math.jai`): slice pieces off
+a rectangle's edges. Sizes are logical units; `px()` scales by the monitor's DPI and `snap()`
+rounds edges to whole pixels so 1 px borders stay crisp. `push_clip` / `push_opacity` clip
+and fade whole groups (page transitions, scrolling).
+
+## Platforms
+
+`platform.jai` declares the API and owns the OS-independent input state; each OS implements
+it in its own file, chosen with `#if OS`. Keys use Windows virtual-key values as the shared
+`Key` enum; other platforms translate to them. To add macOS or Linux:
+
+1. `src/platform/platform_macos.jai` / `platform_linux.jai`: window, event pump, wait for
+   events, DPI scale, cursor; `#load` it in `platform.jai`.
+2. `src/render/metal/` or `src/render/vulkan/`: the five renderer procedures and a port of
+   `ui.hlsl` (the instance layout and shading model stay the same); `#load` in `renderer.jai`.
+3. Font candidate paths for the platform's UI font in `ui/theme.jai`.
+4. Shader compilation for that backend in `build.jai`.
+
+## Next steps
+
+- Text shaping (HarfBuzz) for ligatures, GPOS kerning and complex scripts.
+- Text input widget (the platform already delivers UTF-32 code points in `input.text`).
+- GPU timing via timestamp queries in the stats.
+- A flexible row/column layout helper on top of rect cutting.
+- Image support: a second atlas or bindless textures, a fourth instance kind.

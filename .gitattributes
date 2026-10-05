@@ -1,0 +1,7 @@
+* text=auto
+*.jai text eol=lf
+*.hlsl text eol=lf
+*.md text eol=lf
+*.ttf binary
+*.otf binary
+*.png binary
