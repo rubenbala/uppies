@@ -14,8 +14,13 @@ src/render/                  Everything that turns a frame into pixels
     font.jai                 FreeType glyph cache + shelf-packed atlas
     renderer.jai             Backend interface, stats, settings
     d3d11/                   Direct3D 11 backend + its shader (ui.hlsl)
-src/ui/                      Immediate-mode widgets, retained animation state, theme
-src/app/                     The screens
+src/core/json.jai            JSON parser (tree) and string escaping
+src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
+src/core/format.jai          Money (integer cents) and number formatting
+src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
+src/up/                      The Up API: model + parsing, store, threaded client, sample-data simulation
+src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
+src/app/                     The console: sync engine, analytics, pages, charts, inspector, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
 ```
 
@@ -117,6 +122,19 @@ it in its own file, chosen with `#if OS`. Keys use Windows virtual-key values as
    `ui.hlsl` (the instance layout and shading model stay the same); `#load` in `renderer.jai`.
 3. Font candidate paths for the platform's UI font in `ui/theme.jai`.
 4. Shader compilation for that backend in `build.jai`.
+
+## Data flow
+
+`up/client.jai` queues requests for two worker threads; each finished request posts
+`WM_APP_WAKE`, so the UI loop wakes, takes the replies (`api_take_completed`) and hands them to
+`app/sync.jai`, which parses them into `up/store.jai`. Every store change bumps
+`store.version`; `app/analytics.jai` and each page's cached rows recompute only when the version
+(or a filter) changes. Sample-data mode answers the same requests from `up/demo.jai`, so paging,
+parsing, errors and writes all run the real code.
+
+Timers (caret blink, tooltip delay, toasts, auto-refresh, relative times) don't keep the loop
+running: they call `ui_wake_at`, and the loop sleeps until then. `ui.time` is wall-clock;
+animations step by `dt`.
 
 ## Next steps
 

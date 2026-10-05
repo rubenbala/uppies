@@ -1,0 +1,141 @@
+// `uppies.exe -selftest`: runs the sample API through the real parser and
+// store, and checks the formatting and parsing helpers. Exit code 0 = pass.
+
+selftest :: () -> int {
+    demo_init();
+    failures := 0;
+    check :: (ok: bool, what: string) #expand {
+        if !ok { print("FAIL: %\n", what); `failures += 1; }
+        else print("ok:   %\n", what);
+    }
+    ORIGIN :: "https://api.up.com.au";
+
+    r := demo_execute("GET", "/api/v1/accounts?page%5Bsize%5D=100", "");
+    doc, ok := json_parse(r.body);
+    check(ok && r.status == 200, "accounts parse");
+    accounts: [..] Account;
+    for * json_array(json_get(*doc, "data")) array_add(*accounts, parse_account(it));
+    store_merge_accounts(*store, accounts);
+    check(store.accounts.count == 6, tprint("6 accounts (got %)", store.accounts.count));
+    for store.accounts print("      % % % %\n", it.name, it.type, it.ownership, format_money(it.balance));
+
+    r = demo_execute("GET", "/api/v1/categories", "");
+    doc, ok = json_parse(r.body);
+    categories: [..] Category;
+    for * json_array(json_get(*doc, "data")) array_add(*categories, parse_category(it));
+    store_merge_categories(*store, categories);
+    check(store.categories.count > 40, tprint("categories (got %)", store.categories.count));
+
+    path := "/api/v1/transactions?page%5Bsize%5D=100";
+    pages := 0;
+    start := seconds_since_init();
+    while path.count {
+        r = demo_execute("GET", path, "");
+        doc, ok = json_parse(r.body);
+        if !ok { print("parse error: %\n", slice(r.body, 0, min(r.body.count, 400))); break; }
+        batch: [..] Transaction;
+        for * json_array(json_get(*doc, "data")) array_add(*batch, parse_transaction(it, *store));
+        store_merge_transactions(*store, batch, 0);
+        next := json_string(json_at(*doc, "links", "next"));
+        path = ifx next.count then copy_string(slice(next, ORIGIN.count, next.count - ORIGIN.count)) else "";
+        pages += 1;
+    }
+    print("      % pages, % transactions in % s (incl. simulated latency)\n", pages, store.transactions.count, formatFloat(seconds_since_init() - start, trailing_width = 2));
+    check(store.transactions.count > 2000, "transactions loaded");
+
+    sorted := true;
+    for 1..store.transactions.count - 1 if store.transactions[it].created.utc > store.transactions[it - 1].created.utc sorted = false;
+    check(sorted, "newest first");
+    held := 0;
+    for store.transactions if it.status == .HELD held += 1;
+    check(held > 0, tprint("held transactions present (%)", held));
+
+    // Each account's balance minus everything in its history is the balance
+    // it had before the history starts; it must not be negative.
+    for a, ai: store.accounts {
+        sum: s64;
+        for store.transactions if it.account == ai sum += balance_effect(*it);
+        print("      % balance % = opening % + history %\n", a.name, format_money(a.balance), format_money(a.balance - sum), format_money(sum));
+        check(a.balance - sum >= 0, tprint("% opening balance not negative", a.name));
+    }
+
+    t := *store.transactions[0];
+    print("      newest: % | % | % | % | %\n", format_timestamp_full(t.created), t.description, format_money(t.amount), category_name(*store, t.category), t.status);
+    check(store_find_transaction(*store, t.id) == 0, "lookup by id");
+
+    takeaway := store_find_category(*store, "takeaway");
+    check(takeaway >= 0, "category lookup");
+    r = demo_execute("PATCH", tprint("/api/v1/transactions/%/relationships/category", t.id), "{\"data\":{\"type\":\"categories\",\"id\":\"takeaway\"}}");
+    check(r.status == 204 || r.status == 403, tprint("categorise (status %)", r.status));
+    r = demo_execute("PATCH", tprint("/api/v1/transactions/%/relationships/category", t.id), "{\"data\":{\"type\":\"categories\",\"id\":\"good-life\"}}");
+    check(r.status == 422 || r.status == 403, tprint("parent category rejected (status %)", r.status));
+    print("      error document: %\n", parse_api_error(r.body));
+
+    r = demo_execute("GET", "/api/v1/webhooks", "");
+    doc, ok = json_parse(r.body);
+    hooks := json_array(json_get(*doc, "data"));
+    check(hooks.count == 2, "webhooks listed");
+    if hooks.count == 2 {
+        w := parse_webhook(*hooks[1]);
+        r = demo_execute("GET", tprint("/api/v1/webhooks/%/logs?%", w.id, query_param("page[size]", "30")), "");
+        doc, ok = json_parse(r.body);
+        logs := json_array(json_get(*doc, "data"));
+        check(logs.count == 30, tprint("webhook logs page (got %)", logs.count));
+        if logs.count {
+            l := parse_webhook_log(*logs[0]);
+            print("      log: % % % %\n", l.event_type, l.delivery, l.status_code, format_timestamp_full(l.created));
+        }
+    }
+
+    // JSON edge cases. BS is a backslash, so the escapes reach the parser.
+    BS :: "\\";
+    text := tprint("{\"a\":\"%1u00e9%1ud83d%1ude00 %1\" %1n\",\"b\":[1,-2.5e2,true,null],\"c\":9007199254740993}", BS);
+    j, jok := json_parse(text);
+    check(jok, "parses escapes");
+    a := json_string(json_get(*j, "a"));
+    check(a.count == 2 + 4 + 1 + 1 + 1 + 1 && a[0] == 0xC3 && a[1] == 0xA9 && a[2] == 0xF0, tprint("unicode escapes (% bytes)", a.count));
+    check(json_int(json_get(*j, "c")) == 9007199254740993, "64-bit integers exact");
+    check(json_array(json_get(*j, "b")).count == 4, "array items");
+    _, bad := json_parse("{\"a\":}");
+    check(!bad, "rejects malformed JSON");
+    _, bad2 := json_parse("[1,2");
+    check(!bad2, "rejects truncated JSON");
+
+    ts, tok := parse_rfc3339("2024-08-05T05:16:50+10:00");
+    check(tok && ts.utc == 1722799010 && ts.offset == 600, "rfc3339 parse");
+    check(format_timestamp_full(ts) == "2024-08-05 05:16:50 +10:00", tprint("format full: %", format_timestamp_full(ts)));
+    check(format_rfc3339_utc(ts.utc) == "2024-08-04T19:16:50Z", tprint("format utc: %", format_rfc3339_utc(ts.utc)));
+    check(format_money(-123456) == tprint("%$1,234.56", MINUS_SIGN), tprint("money: %", format_money(-123456)));
+    check(format_money(5, .ALWAYS) == "+$0.05", "money sign");
+    check(format_money_compact(1234500) == "$12k", tprint("compact: %", format_money_compact(1234500)));
+    check(format_money_compact(123450) == "$1.2k", tprint("compact: %", format_money_compact(123450)));
+    check(format_grouped(1234567) == "1,234,567", "grouping");
+    encoded := url_encode("filter[since]");
+    check(encoded == "filter%5Bsince%5D" || encoded == "filter%5bsince%5d", tprint("url encode: %", encoded));
+    check(weekday_from_days(days_from_civil(2026, 10, 6)) == 1, "weekday (2026-10-06 is a Tuesday)");
+    d := civil_from_days(days_from_civil(2024, 2, 29));
+    check(d.year == 2024 && d.month == 2 && d.day == 29, "civil round trip");
+
+    // Secrets at rest: DPAPI round trip.
+    secret := "up:yeah:not-a-real-token-0123456789";
+    cipher, protected := platform_protect(secret);
+    check(protected && cipher != secret, "token encrypts");
+    plain, unprotected := platform_unprotect(cipher);
+    check(unprotected && plain == secret, "token decrypts");
+    _, tampered := platform_unprotect(slice(cipher, 0, cipher.count - 1));
+    check(!tampered, "tampered ciphertext is rejected");
+    check(mask_token(secret) == tprint("up:yeah:%2%1", "6789", "••••••••"), tprint("token masking: %", mask_token(secret)));
+
+    // Comparison periods.
+    oct := month_key(2026, 10);
+    so_far := Period.{first_day_of_month(oct), days_from_civil(2026, 10, 6)};
+    before := comparison_period(so_far);
+    check(before.first == days_from_civil(2026, 9, 1) && before.last == days_from_civil(2026, 9, 6), tprint("month so far compares with the same days: %", period_label(before)));
+    whole := month_period(oct - 1);
+    before = comparison_period(whole);
+    check(before.first == days_from_civil(2026, 8, 1) && before.last == days_from_civil(2026, 8, 31), tprint("whole month compares with the month before: %", period_label(before)));
+    check(format_change_percent(2000, 100) == "×20", tprint("big increases read as multiples: %", format_change_percent(2000, 100)));
+
+    print("\n% failure(s)\n", failures);
+    return ifx failures then 1 else 0;
+}

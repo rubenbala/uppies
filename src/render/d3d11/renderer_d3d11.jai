@@ -123,6 +123,44 @@ renderer_present :: () {
 
 renderer_tearing_supported :: () -> bool { return d3d.tearing_supported; }
 
+// Reads back the frame just rendered (call between renderer_render and
+// renderer_present) and writes it as a PNG. For screenshots and tests.
+renderer_capture_png :: (path: string) -> bool {
+    if !d3d.device || !d3d.swap_chain return false;
+    back_buffer: *ID3D11Texture2D;
+    iid := uid(ID3D11Texture2D_UUID);
+    if FAILED(IDXGISwapChain_GetBuffer(d3d.swap_chain, 0, *iid, xx *back_buffer)) return fail("GetBuffer(capture)");
+    defer safe_release(back_buffer);
+
+    desc: D3D11_TEXTURE2D_DESC;
+    ID3D11Texture2D_GetDesc(back_buffer, *desc);
+    desc.Usage          = .STAGING;
+    desc.BindFlags      = 0;
+    desc.CPUAccessFlags = .READ;
+    desc.MiscFlags      = 0;
+    staging: *ID3D11Texture2D;
+    if FAILED(ID3D11Device_CreateTexture2D(d3d.device, *desc, null, *staging)) return fail("CreateTexture2D(staging)");
+    defer safe_release(staging);
+    ID3D11DeviceContext_CopyResource(d3d.device_context, staging, back_buffer);
+
+    mapped: D3D11_MAPPED_SUBRESOURCE;
+    if FAILED(ID3D11DeviceContext_Map(d3d.device_context, staging, 0, .READ, 0, *mapped)) return fail("Map(staging)");
+    w := cast(s32) desc.Width;
+    h := cast(s32) desc.Height;
+    rgb := NewArray(w * h * 3, u8,, temp);
+    for y: 0..h - 1 {
+        src := cast(*u8) mapped.pData + y * cast(s64) mapped.RowPitch;
+        dst := rgb.data + y * w * 3;
+        for x: 0..w - 1 {
+            dst[x * 3 + 0] = src[x * 4 + 2];   // BGRA -> RGB
+            dst[x * 3 + 1] = src[x * 4 + 1];
+            dst[x * 3 + 2] = src[x * 4 + 0];
+        }
+    }
+    ID3D11DeviceContext_Unmap(d3d.device_context, staging, 0);
+    return write_png_rgb(path, w, h, rgb.data);
+}
+
 #scope_file
 
 D3D_State :: struct {

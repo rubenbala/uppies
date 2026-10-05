@@ -1,4 +1,6 @@
-// Platform layer: window, input, time, cursor.
+// Platform layer: window, input, time, cursor, and the few OS services the
+// app needs (clipboard, opening links, local time, per-user storage, secret
+// storage, waking the UI from another thread).
 //
 // Everything OS-specific lives behind this file. The rest of the app only
 // sees `platform` and `input` and the procedures declared here; each OS
@@ -28,6 +30,14 @@ Platform_State :: struct {
     // loop), so the app keeps animating and redraws at the new size.
     modal_frame: #type ();
     in_modal_frame: bool;
+
+    double_click_seconds: float = 0.5;
+}
+
+// Wall-clock time: UTC seconds since 1970 and the local offset from UTC.
+Local_Time :: struct {
+    utc_seconds:    s64;
+    offset_minutes: s32;
 }
 
 platform: Platform_State;
@@ -91,6 +101,9 @@ Input_State :: struct {
     key_released: [KEY_COUNT] bool;
 
     text: [..] u32;                 // Code points typed this frame.
+
+    // A test script drives the mouse; the real one is ignored.
+    synthetic: bool;
 }
 
 input: Input_State;
@@ -105,6 +118,10 @@ input_end_frame :: () {
 }
 
 key_pressed :: inline (key: Key) -> bool { return input.key_pressed[cast(u16) key]; }
+ctrl_down   :: inline () -> bool { return input.key_down[Key.CONTROL]; }
+shift_down  :: inline () -> bool { return input.key_down[Key.SHIFT]; }
+// Ctrl+letter: ctrl_letter_pressed(#char "F").
+ctrl_letter_pressed :: inline (ascii: u8) -> bool { return input.key_down[Key.CONTROL] && input.key_pressed[ascii]; }
 key_down    :: inline (key: Key) -> bool { return input.key_down[cast(u16) key]; }
 // Letters and digits: letter_pressed(#char "V").
 letter_pressed :: inline (ascii: u8) -> bool { return input.key_pressed[ascii]; }

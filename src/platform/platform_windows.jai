@@ -12,8 +12,8 @@
 
 platform_window: HWND;
 
-MIN_WINDOW_WIDTH  :: 640;   // Logical units.
-MIN_WINDOW_HEIGHT :: 400;
+MIN_WINDOW_WIDTH  :: 1000;   // Logical units.
+MIN_WINDOW_HEIGHT :: 620;
 
 platform_init :: (title: string, logical_width: int, logical_height: int) -> bool {
     if !SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) SetProcessDPIAware();
@@ -51,6 +51,7 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
     if dpi == 0 dpi = 96;
     platform.dpi_scale = dpi / 96.0;
     platform.refresh_hz = xx detect_refresh_rate(platform_window);
+    platform.double_click_seconds = GetDoubleClickTime() / 1000.0;
 
     // Size the client area in logical units, fit to the work area, center.
     w := cast(s32) (logical_width  * platform.dpi_scale);
@@ -102,9 +103,81 @@ platform_pump_events :: () {
     }
 }
 
-// Sleeps until the OS has a message for us. An idle app costs nothing.
-platform_wait_for_events :: () {
-    MsgWaitForMultipleObjectsEx(0, null, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+// Sleeps until the OS has a message for us, or until timeout_seconds pass
+// (negative: no timeout). An idle app costs nothing.
+platform_wait_for_events :: (timeout_seconds: float64 = -1) {
+    ms: u32 = INFINITE;
+    if timeout_seconds >= 0 ms = cast(u32) min(timeout_seconds * 1000 + 1, 3_600_000.0);
+    MsgWaitForMultipleObjectsEx(0, null, ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+}
+
+// Wakes the main loop from any thread (a network reply arrived).
+platform_wake :: () {
+    if platform_window PostMessageW(platform_window, WM_APP_WAKE, 0, 0);
+}
+
+platform_open_url :: (url: string) {
+    ShellExecuteW(null, utf8_to_wide("open",, temp), utf8_to_wide(url,, temp), null, null, SW_SHOWNORMAL);
+}
+
+platform_clipboard_get :: () -> string {   // Temporary storage.
+    text := os_clipboard_get_text();
+    result := copy_string(text,, temp);
+    free(text);
+    return result;
+}
+
+platform_clipboard_set :: (text: string) {
+    os_clipboard_set_text(text);
+}
+
+platform_local_time :: () -> Local_Time {
+    utc, local: SYSTEMTIME;
+    GetSystemTime(*utc);
+    GetLocalTime(*local);
+    to_seconds :: (t: SYSTEMTIME) -> s64 {
+        days := days_from_civil(t.wYear, t.wMonth, t.wDay);
+        return days * 86400 + t.wHour * 3600 + t.wMinute * 60 + t.wSecond;
+    }
+    result: Local_Time;
+    result.utc_seconds = to_seconds(utc);
+    diff := to_seconds(local) - result.utc_seconds;
+    result.offset_minutes = cast(s32) ((diff + (ifx diff >= 0 then 30 else -30)) / 60);
+    return result;
+}
+
+// Per-user app directory (%APPDATA%/Uppies), created on first use.
+platform_app_data_dir :: () -> string {
+    if !app_data_dir {
+        buffer: [1024] u16;
+        n := GetEnvironmentVariableW(utf8_to_wide("APPDATA",, temp), buffer.data, buffer.count);
+        base := ifx n > 0 && n < buffer.count then wide_to_utf8(buffer.data, cast(s32) n,, temp) else exe_dir;
+        app_data_dir = sprint("%/Uppies", base);
+        for 0..app_data_dir.count - 1 if app_data_dir[it] == #char "\\" app_data_dir[it] = #char "/";
+        make_directory_if_it_does_not_exist(app_data_dir, recursive = true);
+    }
+    return app_data_dir;
+}
+
+// Secrets at rest are encrypted with DPAPI: only this Windows user on this
+// machine can decrypt them.
+platform_protect :: (plain: string) -> string, bool {
+    input_blob := DATA_BLOB.{cast(u32) plain.count, plain.data};
+    output_blob: DATA_BLOB;
+    if !CryptProtectData(*input_blob, utf8_to_wide("Uppies",, temp), null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
+    result := copy_string(string.{output_blob.cbData, output_blob.pbData});
+    LocalFree(output_blob.pbData);
+    return result, true;
+}
+
+platform_unprotect :: (cipher: string) -> string, bool {
+    input_blob := DATA_BLOB.{cast(u32) cipher.count, cipher.data};
+    output_blob: DATA_BLOB;
+    if !CryptUnprotectData(*input_blob, null, null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
+    result := copy_string(string.{output_blob.cbData, output_blob.pbData});
+    memset(output_blob.pbData, 0, output_blob.cbData);
+    LocalFree(output_blob.pbData);
+    return result, true;
 }
 
 platform_set_cursor :: (cursor: Cursor) {
@@ -129,6 +202,7 @@ platform_sleep_until :: (deadline_seconds: float64) {
 #scope_file
 
 window_proc_context: #Context;
+app_data_dir: string;
 cursors: [#run enum_highest_value(Cursor) + 1] HCURSOR;
 current_cursor: Cursor;
 tracking_mouse: bool;
@@ -151,6 +225,10 @@ handle_message :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> 
 
         case WM_ERASEBKGND;
             return 1;   // The swap chain covers everything.
+
+        case WM_APP_WAKE;
+            platform.needs_redraw = true;
+            return 0;
 
         case WM_PAINT;
             ValidateRect(hwnd, null);
@@ -220,6 +298,7 @@ handle_message :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> 
             }
 
         case WM_MOUSEMOVE;
+            if input.synthetic return 0;
             if !tracking_mouse {
                 tme: TRACKMOUSEEVENT;
                 tme.cbSize    = size_of(TRACKMOUSEEVENT);
@@ -233,7 +312,7 @@ handle_message :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> 
 
         case WM_MOUSELEAVE;
             tracking_mouse = false;
-            input_on_mouse_leave();
+            if !input.synthetic input_on_mouse_leave();
             return 0;
 
         case WM_LBUTTONDOWN; #through;
@@ -281,6 +360,7 @@ handle_message :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> 
 }
 
 mouse_button :: (hwnd: HWND, button: Mouse_Button, down: bool, lparam: LPARAM) {
+    if input.synthetic return;
     // Capture so a drag that leaves the window still gets its release.
     if down SetCapture(hwnd);
     input_on_mouse_move(xx lparam_x(lparam), xx lparam_y(lparam));
@@ -322,8 +402,20 @@ detect_refresh_rate :: (hwnd: HWND) -> int {
 
 // Win32 declarations the Windows module does not have.
 
-win32_user32 :: #library,system "user32";
-win32_dwmapi :: #library,system "dwmapi";
+win32_user32   :: #library,system "user32";
+win32_dwmapi   :: #library,system "dwmapi";
+win32_shell32  :: #library,system "shell32";
+win32_crypt32  :: #library,system "crypt32";
+win32_kernel32 :: #library,system "kernel32";
+
+WM_APP_WAKE   :: 0x8000 + 1;   // WM_APP + 1
+SW_SHOWNORMAL :: 1;
+CRYPTPROTECT_UI_FORBIDDEN :: 0x1;
+
+DATA_BLOB :: struct {
+    cbData: u32;
+    pbData: *u8;
+}
 
 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 :: -4;
 DWMWA_USE_IMMERSIVE_DARK_MODE :: 20;
@@ -358,3 +450,9 @@ TrackMouseEvent :: (tme: *TRACKMOUSEEVENT) -> s32 #foreign win32_user32;
 SetTimer  :: (hwnd: HWND, timer_id: u64, interval_ms: u32, callback: *void) -> u64 #foreign win32_user32;
 KillTimer :: (hwnd: HWND, timer_id: u64) -> s32 #foreign win32_user32;
 DwmSetWindowAttribute :: (hwnd: HWND, attribute: u32, value: *void, size: u32) -> s32 #foreign win32_dwmapi;
+PostMessageW :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> s32 #foreign win32_user32;
+GetDoubleClickTime :: () -> u32 #foreign win32_user32;
+ShellExecuteW :: (hwnd: HWND, operation: *u16, file: *u16, parameters: *u16, directory: *u16, show: s32) -> *void #foreign win32_shell32;
+GetEnvironmentVariableW :: (name: *u16, buffer: *u16, size: u32) -> u32 #foreign win32_kernel32;
+CryptProtectData :: (data_in: *DATA_BLOB, description: *u16, entropy: *DATA_BLOB, reserved: *void, prompt: *void, flags: u32, data_out: *DATA_BLOB) -> s32 #foreign win32_crypt32;
+CryptUnprotectData :: (data_in: *DATA_BLOB, description: **u16, entropy: *DATA_BLOB, reserved: *void, prompt: *void, flags: u32, data_out: *DATA_BLOB) -> s32 #foreign win32_crypt32;

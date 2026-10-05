@@ -1,98 +1,190 @@
-// The app: a sidebar, pages of panels, buttons and text, and a status bar.
-// Doubles as a showcase and a benchmark for the UI stack: the Overview page
-// shows live frame timings and what the GPU is being sent.
+// Uppies: a desktop console for an Up bank account, on the Up API.
+//
+// The window is a top bar (brand, the pages as tabs, sync state), a page,
+// and a status bar. Pages are built around the questions they answer:
+//
+//   Overview      Where do I stand, and what changed recently?
+//   Transactions  Find, inspect and fix (category, tags) individual transactions.
+//   Accounts      How is each balance moving, month by month?
+//   Spending      Where does the money go, and how does it compare?
+//   Tags          What did each tagged project or trip cost?
+//   Webhooks      Are my webhooks configured and delivering?
+//   Settings      Connection, data, display, diagnostics.
 
-Page :: enum u8 { OVERVIEW; PROJECTS; ACTIVITY; SETTINGS; }
+Page :: enum u8 { OVERVIEW; TRANSACTIONS; ACCOUNTS; SPENDING; TAGS; WEBHOOKS; SETTINGS; }
 
-PAGE_TITLES    :: string.["Overview", "Projects", "Activity", "Settings"];
-PAGE_SUBTITLES :: string.[
-    "Jai and Direct3D 11. Every frame is a single instanced draw call.",
-    "Everything you are building, in one place.",
-    "What happened recently across your workspace.",
-    "Rendering and animation options.",
-];
+PAGE_TITLES :: string.["Overview", "Transactions", "Accounts", "Spending", "Tags", "Webhooks", "Settings"];
+PAGE_COUNT  :: 7;
 
-HISTORY :: 90;
+Toast_Kind :: enum u8 { INFO; SUCCESS; ERROR; }
+
+Toast :: struct {
+    kind: Toast_Kind;
+    text: string;
+    born: float64;
+    life: float;
+    t:    float;
+    leaving: bool;
+}
+
+Confirm_Kind :: enum u8 { NONE; DELETE_WEBHOOK; DISCONNECT; RELOAD; }
+
+Confirm :: struct {
+    open:    bool;
+    t:       float;
+    title:   string;
+    detail:  string;
+    action:  string;
+    ref:     string;
+    kind:    Confirm_Kind;
+}
 
 App :: struct {
     page: Page;
-    page_t: float = 1;              // 0 -> 1 as a newly selected page comes in.
-    nav_spring: Spring;             // Selection pill position, in nav rows.
-    intro_time: float;              // Seconds since startup, for the entrance.
+    previous_page: Page;
+    page_t: float = 1;
+    page_age: float;           // Seconds since the page appeared.
+    tab_x: Spring;
+    tab_w: Spring;
+    tabs_ready: bool;
+    console_t: float;          // Connect screen -> console transition.
+    keep_page: bool;           // A page was asked for at startup: stay on it.
 
-    scroll: float;                  // Logical units.
-    scroll_target: float;
-    content_height: float;          // Of the current page, measured last frame.
-    was_animating: bool;            // Last frame's ui.animating: this frame's is still being decided.
+    now: Local_Time;
+    today: s64;
 
-    continuous_rendering: bool;     // Render every frame even when idle.
-    max_fps: float;                 // With vsync off; 0 = uncapped.
-    animation_speed: float = 1;
+    toasts: [..] Toast;
+    confirm: Confirm;
 
-    // Animation showcase.
-    demo_time: float;
-    demo_playing := true;
-    demo_bars: [7] Spring;
-    demo_progress: float;
-    demo_progress_target := 0.72;
-    demo_seed: u32 = 12345;
+    connect: Connect_State;
+    overview: Overview_State;
+    txn: Transactions_State;
+    accounts: Accounts_State;
+    spending: Spending_State;
+    tags: Tags_State;
+    webhooks: Webhooks_State;
+    settings_page: Settings_State;
 
-    // Frame timing history (ring buffers).
-    cpu_ms:      [HISTORY] float;
-    interval_ms: [HISTORY] float;
+    // Rendering diagnostics (Settings).
+    continuous_rendering: bool;
+    max_fps: float;
+    cpu_ms:      [90] float;
+    interval_ms: [90] float;
     history_at:  int;
-    shown_cpu_ms: float;            // Smoothed for display.
+    shown_cpu_ms: float;
     shown_fps:    float;
+    was_animating: bool;
 }
 
 app: App;
 
-app_init :: () {
-    app.nav_spring.value = 0;
-    for * app.demo_bars it.value = 0.1;
-    randomize_demo_bars();
-}
+app_init :: (start_demo := false) {
+    settings_load();
+    renderer_settings.vsync = settings.vsync;
+    ui.motion = ifx settings.reduce_motion then 0.0 else 1.0;
+    api_init();
+    demo_init();
 
-app_frame :: () {
-    dt := ui.dt;
-    app.intro_time += dt;
-    if app.intro_time < 1.5 ui.animating = true;
-
-    record_timings();
-    handle_hotkeys();
-
-    full := rect(0, 0, xx platform.width, xx platform.height);
-    status := cut_bottom(*full, px(30));
-    sidebar := cut_left(*full, px(236));
-
-    draw_sidebar(sidebar);
-    draw_content(full);
-    draw_status_bar(status);
-    app.was_animating = ui.animating;
-}
-
-#scope_file
-
-handle_hotkeys :: () {
-    if letter_pressed(#char "V") renderer_settings.vsync = !renderer_settings.vsync;
-    if letter_pressed(#char "C") app.continuous_rendering = !app.continuous_rendering;
-    if key_down(.CONTROL) {
-        for 0..3 if letter_pressed(cast(u8) (#char "1" + it)) select_page(cast(Page) it);
+    token, ok := token_load();
+    if start_demo {
+        sync_start("", true);
+        app.connect.auto_connecting = true;
+    } else if ok && token.count {
+        buffer_set(*app.connect.token, token);
+        sync_start(token, false);
+        app.connect.auto_connecting = true;
+    } else if settings.sample_data {
+        sync_start("", true);
+        app.connect.auto_connecting = true;
     }
 }
 
+app_frame :: () {
+    app.now = platform_local_time();
+    app.today = floor_div(app.now.utc_seconds + app.now.offset_minutes * 60, SECONDS_PER_DAY);
+    record_timings();
+    sync_update();
+    analytics_update(app.today);
+    // Relative times ("3m ago") stay current: a frame a minute is enough.
+    ui_wake_at(ui.time + 60 - fmod_cycling(cast(float) app.now.utc_seconds, 60.0));
+
+    full := rect(0, 0, xx platform.width, xx platform.height);
+    draw_rect(full, theme.background);
+
+    in_console := sync.phase == .LOADING || sync.phase == .READY;
+    ui_animate(*app.console_t, ifx in_console then 1.0 else 0.0, 7);
+
+    if app.console_t < 0.999 {
+        push_opacity(1 - app.console_t);
+        draw_connect_screen(full);
+        pop_opacity();
+    }
+    if app.console_t > 0.001 {
+        push_opacity(app.console_t);
+        draw_console(full);
+        pop_opacity();
+    }
+
+    draw_toasts(full);
+    draw_confirm();
+    if in_console handle_hotkeys();
+    app.was_animating = ui.animating;
+}
+
+app_toast :: (kind: Toast_Kind, text: string) {
+    // The same message twice in a row just refreshes the first.
+    for * app.toasts if it.text == text && !it.leaving { it.born = ui.time; return; }
+    t := array_add(*app.toasts);
+    t.kind = kind;
+    t.text = copy_string(text);
+    t.born = ui.time;
+    t.life = ifx kind == .ERROR then 7.0 else 4.0;
+    if app.toasts.count > 4 app.toasts[0].leaving = true;
+}
+
+app_on_connected :: () {
+    app.connect.auto_connecting = false;
+    settings.sample_data = sync.demo;
+    if !sync.demo && settings.remember_token token_save(sync.token);
+    settings_save();
+    if !app.keep_page select_page(.OVERVIEW);
+    app.keep_page = false;
+}
+
+app_on_webhook_created :: (id: string) {
+    app.webhooks.creating = false;
+    app.webhooks.select_id = copy_string(id);
+}
+
 select_page :: (page: Page) {
-    if page == app.page return;
+    if page == app.page && app.page_t >= 1 return;
+    app.previous_page = app.page;
     app.page = page;
     app.page_t = 0;
-    app.scroll = 0;
-    app.scroll_target = 0;
+    app.page_age = 0;
+    ui.focus = 0;
+    ui_close_popup();
 }
+
+ask_confirm :: (kind: Confirm_Kind, title: string, detail: string, action: string, ref := "") {
+    c := *app.confirm;
+    c.open = true;
+    c.kind = kind;
+    c.t = 0;
+    set_string(*c.title, title);
+    set_string(*c.detail, detail);
+    set_string(*c.action, action);
+    set_string(*c.ref, ref);
+}
+
+
+TOP_BAR_HEIGHT    :: 44.0;
+STATUS_BAR_HEIGHT :: 24.0;
 
 record_timings :: () {
     app.cpu_ms[app.history_at]      = clock.cpu_ms;
     app.interval_ms[app.history_at] = clock.frame_interval_ms;
-    app.history_at = (app.history_at + 1) % HISTORY;
+    app.history_at = (app.history_at + 1) % app.cpu_ms.count;
     app.shown_cpu_ms = damp(app.shown_cpu_ms, clock.cpu_ms, 6, ui.dt);
     if clock.frame_interval_ms > 0 && !clock.resumed {
         fps := 1000.0 / max(clock.frame_interval_ms, 0.01);
@@ -100,485 +192,494 @@ record_timings :: () {
     }
 }
 
-//
-// Sidebar.
-//
-
-NAV_ROW_HEIGHT :: 38.0;
-
-draw_sidebar :: (area: Rect) {
-    draw_rect(area, theme.sidebar);
-    draw_rect(snap(rect(area.x + area.w - px(1), area.y, px(1), area.h)), theme.divider);
-
-    r := rect_inset_xy(area, px(14), px(18));
-
-    // Brand.
-    brand := cut_top(*r, px(36));
-    logo := snap(rect(brand.x + px(6), brand.y + px(4), px(28), px(28)));
-    draw_shadow(logo, px(8), px(10), color_with_alpha(theme.accent, 0.45), 0, px(3));
-    draw_rect_ex(logo, theme.accent_top, theme.accent_bottom, .[px(8), px(8), px(8), px(8)], hairline(), rgba(0xFFFFFF, 50));
-    draw_up_arrow(logo, theme.on_accent);
-    draw_text_in_rect(fonts.semibold, px(17), rect(logo.x + logo.w + px(12), brand.y, px(150), brand.h), "Uppies", theme.text);
-
-    cut_top(*r, px(26));
-    section := cut_top(*r, px(22));
-    draw_text_in_rect(fonts.semibold, px(11), rect_inset_xy(section, px(10), 0), "WORKSPACE", theme.text_muted);
-    cut_top(*r, px(4));
-
-    // Navigation. The selection pill springs to the chosen row.
-    rows := cut_top(*r, px(NAV_ROW_HEIGHT) * 4);
-    pill_row := ui_spring(*app.nav_spring, xx app.page, 380, 0.78);
-    pill := snap(rect(rows.x, rows.y + pill_row * px(NAV_ROW_HEIGHT), rows.w, px(NAV_ROW_HEIGHT - 2)));
-    draw_rect(pill, theme.surface_hover, px(theme.radius_control));
-    draw_rect(snap(rect(pill.x, pill.y + px(9), px(3), pill.h - px(18))), theme.accent, px(1.5));
-
-    for 0..3 {
-        row := cut_top(*rows, px(NAV_ROW_HEIGHT));
-        row.h -= px(2);
-        page := cast(Page) it;
-        if nav_item(row, page) select_page(page);
+handle_hotkeys :: () {
+    typing := ui.text_focus_prev || ui.text_focus;
+    if ui.modal_prev return;
+    if ctrl_down() {
+        for 0..PAGE_COUNT - 1 if letter_pressed(cast(u8) (#char "1" + it)) select_page(cast(Page) it);
+        if key_pressed(.TAB) {
+            next := (cast(int) app.page + ifx shift_down() then PAGE_COUNT - 1 else 1) % PAGE_COUNT;
+            select_page(cast(Page) next);
+        }
+        if letter_pressed(#char "R") sync_refresh(true);
+        if letter_pressed(#char "F") {
+            select_page(.TRANSACTIONS);
+            app.txn.focus_search = true;
+        }
     }
-
-    // Footer card.
-    footer := cut_bottom(*r, px(92));
-    ui_panel(footer, 0.0, theme.surface);
-    inner := rect_inset_xy(footer, px(14), px(14));
-    line := cut_top(*inner, px(20));
-    draw_circle(line.x + px(4), line.y + line.h * 0.5, px(4), theme.success);
-    draw_text_in_rect(fonts.semibold, px(13), rect(line.x + px(16), line.y, line.w, line.h), "Renderer healthy", theme.text);
-    cut_top(*inner, px(6));
-    draw_text_in_rect(fonts.regular, px(12), cut_top(*inner, px(18)), tprint("% instances, 1 draw call", renderer_stats.instances), theme.text_secondary);
-    draw_text_in_rect(fonts.regular, px(12), cut_top(*inner, px(18)), tprint("Idle CPU when nothing moves"), theme.text_muted);
-}
-
-nav_item :: (r: Rect, page: Page) -> bool {
-    label := PAGE_TITLES[page];
-    id := ui_id("nav", xx page);
-    w := ui_widget(id);
-    io := ui_interact(id, r);
-    selected := app.page == page;
-    ui_animate(*w.hover, ifx io.hovered && !selected then 1.0 else 0.0, 18);
-    ui_animate(*w.press, ifx selected then 1.0 else 0.0, 14);
-    if io.hovered ui.cursor = .HAND;
-
-    if w.hover > 0 draw_rect(snap(r), color_with_alpha(theme.surface_hover, 0.6 * w.hover), px(theme.radius_control));
-
-    color := color_lerp(theme.text_secondary, theme.text, max(w.press, w.hover));
-    icon_color := color_lerp(theme.text_muted, theme.accent_top, w.press);
-    icon := snap(rect(r.x + px(12), r.y + (r.h - px(16)) * 0.5, px(16), px(16)));
-    draw_page_icon(page, icon, color_lerp(icon_color, theme.text, w.hover * 0.5));
-    draw_text_in_rect(fonts.regular, px(14), rect(r.x + px(40), r.y, r.w - px(40), r.h), label, color);
-    return io.clicked;
-}
-
-// Little icons made of the same rounded rectangles as everything else.
-draw_page_icon :: (page: Page, r: Rect, color: Color) {
-    s := r.w;
-    if page == {
-        case .OVERVIEW;
-            g := s * 0.42;
-            gap := s - 2 * g;
-            for y: 0..1 for x: 0..1 draw_rect(rect(r.x + x * (g + gap), r.y + y * (g + gap), g, g), color, px(2));
-        case .PROJECTS;
-            h := s * 0.22;
-            for 0..2 draw_rect(rect(r.x, r.y + it * (h + (s - 3 * h) / 2), s - it * s * 0.2, h), color, h * 0.5);
-        case .ACTIVITY;
-            heights := float.[0.45, 0.9, 0.65, 0.3];
-            bw := s * 0.16;
-            for heights {
-                bh := s * it;
-                draw_rect(rect(r.x + it_index * (s - bw) / 3.0, r.y + s - bh, bw, bh), color, bw * 0.5);
-            }
-        case .SETTINGS;
-            cx, cy := r.x + s * 0.5, r.y + s * 0.5;
-            draw_circle(cx, cy, s * 0.5, color);
-            draw_circle(cx, cy, s * 0.28, theme.sidebar);
-            draw_circle(cx, cy, s * 0.13, color);
-    }
-}
-
-draw_up_arrow :: (r: Rect, color: Color) {
-    cx := r.x + r.w * 0.5;
-    stem_w := r.w * 0.14;
-    draw_rect(rect(cx - stem_w * 0.5, r.y + r.h * 0.34, stem_w, r.h * 0.42), color, stem_w * 0.5);
-    // Chevron from stacked bars: wider as they go down.
-    for 0..3 {
-        t := it / 3.0;
-        w := stem_w + r.w * 0.36 * t;
-        draw_rect(rect(cx - w * 0.5, r.y + r.h * (0.24 + 0.075 * it), w, stem_w * 0.9), color, stem_w * 0.45);
+    if key_pressed(.F5) sync_refresh(true);
+    if !typing && !ctrl_down() {
+        for input.text if it == #char "/" {
+            select_page(.TRANSACTIONS);
+            app.txn.focus_search = true;
+            input.text.count = 0;
+            break;
+        }
     }
 }
 
 //
-// Content.
+// The console: top bar, page, status bar.
 //
 
-draw_content :: (area: Rect) {
-    ui_animate(*app.page_t, 1, 10);
+draw_console :: (full: Rect) {
+    r := full;
+    top := cut_top(*r, px(TOP_BAR_HEIGHT));
+    status := cut_bottom(*r, px(STATUS_BAR_HEIGHT));
+    draw_top_bar(top);
+    draw_status_bar(status);
+
+    ui_animate(*app.page_t, 1, 9);
+    app.page_age += ui.dt * max(ui.motion, 0.0001);
+    if ui.motion <= 0 app.page_age = 10;
     t := ease_out_cubic(app.page_t);
+    direction := ifx cast(int) app.page >= cast(int) app.previous_page then 1.0 else -1.0;
 
-    // Header.
-    r := rect_inset_xy(area, px(32), 0);
-    header := cut_top(*r, px(96));
-    title_y := header.y + px(44);
-    push_opacity(t);
-    draw_text(fonts.semibold, px(theme.font_size_title), header.x, title_y + px(6) * (1 - t), PAGE_TITLES[app.page], theme.text);
-    draw_text(fonts.regular, px(theme.font_size_body), header.x, title_y + px(26) + px(6) * (1 - t), PAGE_SUBTITLES[app.page], theme.text_secondary);
-    pop_opacity();
-
-    buttons := header;
-    buttons.y += px(30);
-    buttons.h = px(theme.control_height);
-    if ui_button("New project", cut_right(*buttons, button_width("New project")), .PRIMARY) {
-        select_page(.PROJECTS);
-    }
-    cut_right(*buttons, px(10));
-    if ui_button("Share", cut_right(*buttons, button_width("Share")), .SECONDARY) {}
-    ui_divider(area.x, header.y + header.h - px(1), area.w);
-
-    // Scrollable body, clipped below the header.
-    view := rect(area.x, header.y + header.h, area.w, area.y + area.h - (header.y + header.h));
-    if input.mouse_inside && rect_contains(view, input.mouse_x, input.mouse_y) && input.wheel != 0 {
-        app.scroll_target -= input.wheel * 90;
-    }
-    max_scroll := max(app.content_height - view.h / ui.scale, 0.0);
-    app.scroll_target = clamp(app.scroll_target, 0, max_scroll);
-    ui_animate(*app.scroll, app.scroll_target, 16);
-
-    push_clip(view);
-    push_opacity(t);
-    body := rect_inset_xy(view, px(32), px(24));
-    body.y += px(14) * (1 - t) - px(app.scroll);
-    body.h = 1_000_000;   // Pages lay out top-down without limit; the clip cuts them.
-    top := body.y;
-    bottom: float;
+    content := rect_inset_xy(r, px(12), 0);
+    content.h -= px(10);
+    push_clip(r);
+    push_opacity(0.25 + 0.75 * t);
+    content.x += px(14) * (1 - t) * direction;
     if app.page == {
-        case .OVERVIEW; bottom = draw_overview(body);
-        case .PROJECTS; bottom = draw_projects(body);
-        case .ACTIVITY; bottom = draw_activity(body);
-        case .SETTINGS; bottom = draw_settings(body);
+        case .OVERVIEW;     draw_overview_page(content);
+        case .TRANSACTIONS; draw_transactions_page(content);
+        case .ACCOUNTS;     draw_accounts_page(content);
+        case .SPENDING;     draw_spending_page(content);
+        case .TAGS;         draw_tags_page(content);
+        case .WEBHOOKS;     draw_webhooks_page(content);
+        case .SETTINGS;     draw_settings_page(content);
     }
-    app.content_height = (bottom - top) / ui.scale + 48;
     pop_opacity();
     pop_clip();
 
-    if max_scroll > 0 draw_scrollbar(view, max_scroll);
-}
-
-draw_scrollbar :: (view: Rect, max_scroll: float) {
-    track := rect(view.x + view.w - px(8), view.y + px(6), px(4), view.h - px(12));
-    visible := view.h / (view.h + px(max_scroll));
-    thumb_h := max(track.h * visible, px(32));
-    thumb_y := track.y + (track.h - thumb_h) * (app.scroll / max_scroll);
-    draw_rect(rect(track.x, thumb_y, track.w, thumb_h), theme.border_strong, track.w * 0.5);
-}
-
-// Cards rise into place one after another when the app starts.
-intro :: (index: int) -> float {
-    return ease_out_cubic((app.intro_time - 0.08 - index * 0.07) / 0.55);
-}
-
-card :: (area: Rect, title: string, index: int) -> Rect {
-    t := intro(index);
-    r := area;
-    r.y += px(16) * (1 - t);
-    push_opacity(t);
-    ui_panel(r);
-    inner := rect_inset_xy(r, px(22), px(18));
-    if title.count {
-        head := cut_top(*inner, px(22));
-        draw_text_in_rect(fonts.semibold, px(15), head, title, theme.text);
-        cut_top(*inner, px(14));
-    }
-    return inner;
-}
-
-card_end :: () { pop_opacity(); }
-
-draw_overview :: (body: Rect) -> float {
-    r := body;
-    gap := px(18);
-    width := body.w / ui.scale;   // Logical units, for the breakpoints.
-
-    // Stat tiles: three across, or stacked when narrow.
-    columns := ifx width >= 760 then 3 else 1;
-    tile_h := px(ifx columns == 3 then 148.0 else 116.0);
-    tiles: [3] Rect;
-    if columns == 3 {
-        row := cut_top(*r, tile_h);
-        for 0..2 tiles[it] = split_columns(row, 3, gap, it);
-    } else {
-        for 0..2 {
-            if it cut_top(*r, gap);
-            tiles[it] = cut_top(*r, tile_h);
+    // Load progress: a hairline along the bottom of the top bar.
+    if sync.phase == .LOADING || sync.refreshing || sync.phase == .CONNECTING {
+        bar := rect(top.x, top.y + top.h - px(2), top.w, px(2));
+        if sync.phase == .LOADING {
+            w := ui_widget(ui_id("load-progress"));
+            ui_animate(*w.t, sync_load_progress(), 4);
+            fill := bar;
+            fill.w = bar.w * w.t;
+            draw_rect(fill, theme.accent);
+            draw_rect(rect(fill.x + fill.w - px(60), fill.y, px(60), fill.h), color_with_alpha(rgb(0xFFFFFF), 0.25));
+        } else {
+            // Indeterminate: a segment sweeping across.
+            phase := cast(float) fmod_cycling(ui.time * 0.9, 1.0);
+            seg_w := bar.w * 0.22;
+            x := bar.x - seg_w + (bar.w + seg_w) * ease_in_out_cubic(phase);
+            push_clip(bar);
+            draw_rect(rect(x, bar.y, seg_w, bar.h), theme.accent);
+            pop_clip();
+            ui.animating = true;
         }
     }
-
-    inner := card(tiles[0], "", 0);
-    stat_tile(inner, "Frame time (CPU)", tprint("% ms", formatFloat(app.shown_cpu_ms, trailing_width = 2, zero_removal = .NO)), "Build UI + submit, per frame", app.cpu_ms, 2.0, theme.accent_top);
-    card_end();
-
-    inner = card(tiles[1], "", 1);
-    animating := app.was_animating || app.continuous_rendering;
-    fps_text := ifx animating then tprint("% fps", cast(int) (app.shown_fps + 0.5)) else "Idle";
-    sub := tprint("% Hz display, vsync %", cast(int) (platform.refresh_hz + 0.5), ifx renderer_settings.vsync then "on" else "off");
-    stat_tile(inner, "Frame rate", fps_text, sub, app.interval_ms, 1000.0 / platform.refresh_hz * 1.5, theme.success);
-    card_end();
-
-    inner = card(tiles[2], "", 2);
-    kb := renderer_stats.upload_bytes / 1024.0;
-    stat_tile(inner, "GPU work", tprint("% draw call", renderer_stats.draw_calls), tprint("% instances, % KB uploaded", renderer_stats.instances, formatFloat(kb, trailing_width = 1, zero_removal = .NO)), .[], 1, theme.warning);
-    card_end();
-
-    // Controls beside the animation, or above it when narrow.
-    cut_top(*r, gap);
-    if width >= 900 {
-        row := cut_top(*r, px(300));
-        left := cut_left(*row, (row.w - gap) * 0.42);
-        cut_left(*row, gap);
-        draw_controls_card(left, 3);
-        draw_animation_card(row, 4);
-    } else {
-        draw_controls_card(cut_top(*r, px(300)), 3);
-        cut_top(*r, gap);
-        draw_animation_card(cut_top(*r, px(300)), 4);
-    }
-
-    cut_top(*r, gap);
-    typo := cut_top(*r, px(272));
-    draw_typography_card(typo, 5);
-    return typo.y + typo.h;
 }
 
-stat_tile :: (inner: Rect, label: string, value: string, sub: string, history: [] float, scale_ms: float, color: Color) {
-    r := inner;
-    draw_text_in_rect(fonts.regular, px(13), cut_top(*r, px(18)), label, theme.text_secondary);
-    cut_top(*r, px(6));
-    value_row := cut_top(*r, px(40));
-    value_w := draw_text_in_rect(fonts.light, px(theme.font_size_display), value_row, value, theme.text);
-    side_x := max(inner.x + value_w + px(24), inner.x + inner.w * 0.55);
-    side_w := inner.x + inner.w - side_x;
-    cut_top(*r, px(4));
-    draw_text_in_rect(fonts.regular, px(12), cut_top(*r, px(18)), sub, theme.text_muted);
+draw_brand :: (r: Rect) -> float {
+    mark := snap(rect(r.x, r.y + (r.h - px(18)) * 0.5, px(18), px(18)));
+    draw_rect(mark, theme.accent, px(3));
+    // An upward chevron from two short strokes.
+    cx := mark.x + mark.w * 0.5;
+    cy := mark.y + mark.h * 0.56;
+    draw_line(cx - px(4.5), cy + px(2), cx, cy - px(2.5), px(2), theme.on_accent);
+    draw_line(cx, cy - px(2.5), cx + px(4.5), cy + px(2), px(2), theme.on_accent);
+    tw := draw_text_in_rect(fonts.semibold, px(14), rect(mark.x + mark.w + px(9), r.y, px(100), r.h), "Uppies", theme.text);
+    return mark.w + px(9) + tw;
+}
 
-    if side_w < px(60) return;
-    if history.count {
-        // Recent frames as bars, newest on the right.
-        graph_w := min(side_w, px(180));
-        graph := rect(inner.x + inner.w - graph_w, inner.y, graph_w, px(44));
-        n := 30;
-        bw := graph.w / n;
-        peak := scale_ms;
-        for 0..n - 1 peak = max(peak, history[(app.history_at - n + it + HISTORY) % HISTORY]);
-        for 0..n - 1 {
-            v := history[(app.history_at - n + it + HISTORY) % HISTORY];
-            h := max(graph.h * (v / peak), px(2));
-            bar := rect(graph.x + it * bw, graph.y + graph.h - h, max(bw - px(2), 1.0), h);
-            draw_rect(bar, color_with_alpha(color, 0.35 + 0.65 * (it / cast(float) n)), px(1.5));
+draw_top_bar :: (r: Rect) {
+    draw_rect(r, theme.chrome);
+    ui_divider(r.x, r.y + r.h - hairline(), r.w, theme.border);
+    bar := rect_inset_xy(r, px(14), 0);
+    brand_w := draw_brand(bar);
+    cut_left(*bar, brand_w + px(18));
+    ui_vdivider(bar.x - px(1), bar.y + px(13), bar.h - px(26), theme.border);
+    cut_left(*bar, px(6));
+
+    // Right side: sync state and refresh.
+    right := bar;
+    refresh_r := cut_right(*right, px(28));
+    refresh_r = rect(refresh_r.x, right.y + (right.h - px(28)) * 0.5, px(28), px(28));
+    busy := sync_is_busy();
+    if ui_icon_button("refresh##top", .REFRESH, refresh_r, ifx sync.phase == .LOADING then "Loading history…" else "Refresh (F5)", enabled = sync.phase == .READY && !sync.refreshing) sync_refresh(true);
+    if busy {
+        // A small spinner over the button while working.
+        draw_spinner(refresh_r.x + refresh_r.w * 0.5, refresh_r.y + refresh_r.h * 0.5, px(7));
+    }
+    cut_right(*right, px(8));
+    status_w := draw_sync_status(right);
+    cut_right(*right, status_w + px(12));
+    if sync.demo {
+        cy := right.y + right.h * 0.5;
+        label := "SAMPLE DATA";
+        w := measure_text(fonts.semibold, px(theme.font_size_small), label) + px(12);
+        draw_chip(right.x + right.w - w, cy, label, theme.info);
+        cut_right(*right, w + px(10));
+    }
+
+    // Tabs.
+    tabs := bar;
+    tabs.w = right.x + right.w - tabs.x;
+    x := tabs.x;
+    active_x, active_w: float;
+    for i: 0..PAGE_COUNT - 1 {
+        page := cast(Page) i;
+        label := PAGE_TITLES[i];
+        badge := "";
+        badge_color: Color;
+        if page == .TRANSACTIONS && analytics.held_count > 0 { badge = tprint("%", analytics.held_count); badge_color = theme.held; }
+        if page == .WEBHOOKS && sync.webhooks_state == .LOADED { badge = tprint("%", sync.webhooks.count); badge_color = theme.text_muted; }
+        if page == .SETTINGS && sync.auth_failed { badge = "!"; badge_color = theme.danger; }
+        tw := measure_text(fonts.semibold, px(13), label);
+        bw := ifx badge.count then measure_text(fonts.semibold, px(theme.font_size_small), badge) + px(10) else 0.0;
+        w := tw + px(24) + ifx bw > 0 then bw + px(6) else 0.0;
+        tab := rect(x, tabs.y, w, tabs.h);
+        if x + w > tabs.x + tabs.w break;   // Narrow window: the rest are on Ctrl+number.
+        x += w;
+        id := ui_id("tab", i);
+        tw_state := ui_widget(id);
+        io := ui_interact(id, tab);
+        ui_focusable(id);
+        ui_update_focus(tw_state, id);
+        if io.hovered ui.cursor = .HAND;
+        if io.pressed { select_page(page); ui_take_focus(id); }
+        if ui_key_activate(id) {
+            select_page(page);
+            ui_take_focus(id, true);   // Keep the keyboard where it was.
         }
-    } else {
-        // A meter: instances against a budget of 10k.
-        meter := rect(side_x, inner.y + px(18), side_w, px(8));
-        draw_rect(meter, theme.surface_hover, px(4));
-        fill := meter;
-        fill.w = max(meter.w * clamp(renderer_stats.instances / 2000.0, 0.0, 1.0), px(8));
-        draw_rect_gradient(fill, color, color_lerp(color, rgb(0x000000), 0.2), px(4));
+        active := app.page == page;
+        ui_animate(*tw_state.hover, ifx io.hovered && !active then 1.0 else 0.0, 22);
+        ui_animate(*tw_state.press, ifx active then 1.0 else 0.0, 16);
+        color := color_lerp(color_lerp(theme.text_muted, theme.text_secondary, tw_state.hover), theme.text, tw_state.press);
+        text_r := rect(tab.x + px(12), tab.y, tw + px(2), tab.h);
+        draw_text_in_rect(fonts.semibold, px(13), text_r, label, color);
+        if badge.count {
+            br := snap(rect(text_r.x + tw + px(6), tab.y + (tab.h - px(16)) * 0.5, bw, px(16)));
+            draw_rect(br, color_with_alpha(badge_color, 0.14), px(8));
+            draw_text_in_rect(fonts.semibold, px(theme.font_size_small), br, badge, badge_color, .CENTER, .{tabular = true});
+        }
+        ui_focus_ring(rect_inset_xy(tab, px(4), px(9)), tw_state.focus, px(3));
+        if active { active_x = tab.x + px(10); active_w = tab.w - px(20); }
+    }
+    if active_w > 0 {
+        if !app.tabs_ready { app.tab_x.value = active_x; app.tab_w.value = active_w; app.tabs_ready = true; }
+        ix := ui_spring(*app.tab_x, active_x, 520, 0.84);
+        iw := ui_spring(*app.tab_w, active_w, 520, 0.84);
+        draw_rect(snap(rect(ix, r.y + r.h - px(2), iw, px(2))), theme.accent);
     }
 }
 
-draw_controls_card :: (r: Rect, index: int) {
-    inner := card(r, "Controls", index);
-    row_h := px(34);
-    ui_toggle("V-sync", cut_top(*inner, row_h), *renderer_settings.vsync);
-    cut_top(*inner, px(6));
-    ui_toggle("Continuous rendering", cut_top(*inner, row_h), *app.continuous_rendering);
-    cut_top(*inner, px(12));
-    ui_slider("Animation speed", cut_top(*inner, px(52)), *app.animation_speed, 0.25, 3, tprint("%x", formatFloat(app.animation_speed, trailing_width = 2, zero_removal = .NO)));
-
-    buttons := cut_bottom(*inner, px(theme.control_height));
-    if ui_button("Play", cut_left(*buttons, button_width("Play")), .PRIMARY) {
-        app.demo_playing = true;
-        randomize_demo_bars();
+draw_spinner :: (cx: float, cy: float, radius: float, color: Color = 0) {
+    c := ifx color then color else theme.text_secondary;
+    phase := cast(float) fmod_cycling(ui.time * 1.1, 1.0);
+    N :: 8;
+    for i: 0..N - 1 {
+        a := (i / cast(float) N) * TAU;
+        fade := fmod_cycling(phase - i / cast(float) N + 1, 1.0);
+        alpha := 0.15 + 0.85 * (1 - fade);
+        x0 := cx + cos(a) * radius * 0.45;
+        y0 := cy + sin(a) * radius * 0.45;
+        x1 := cx + cos(a) * radius;
+        y1 := cy + sin(a) * radius;
+        draw_line(x0, y0, x1, y1, px(1.6), color_with_alpha(c, alpha));
     }
-    cut_left(*buttons, px(10));
-    if ui_button("Reset", cut_left(*buttons, button_width("Reset")), .SECONDARY) {
-        app.demo_playing = false;
-        app.demo_time = 0;
-        app.demo_progress_target = 0;
-        for * app.demo_bars it.target = 0.08;
+    ui.animating = true;
+}
+
+// "● Synced 14:02 · 3m ago" (right-aligned); returns its width.
+draw_sync_status :: (r: Rect) -> float {
+    size := px(theme.font_size_label);
+    text: string;
+    dot := theme.positive;
+    if sync.auth_failed {
+        text = "Token rejected";
+        dot = theme.danger;
+    } else if sync.phase == .CONNECTING {
+        text = "Connecting…";
+        dot = theme.held;
+    } else if sync.phase == .LOADING {
+        text = tprint("Loading history · % transactions", format_grouped(store.transactions.count));
+        dot = theme.held;
+    } else if sync.refreshing {
+        text = "Refreshing…";
+        dot = theme.held;
+    } else if sync.error.count {
+        text = tprint("Stale · synced %", format_relative(app.now.utc_seconds - sync.last_sync_utc));
+        dot = theme.held;
+    } else if sync.last_sync_utc {
+        ago := app.now.utc_seconds - sync.last_sync_utc;
+        local := Timestamp.{sync.last_sync_utc, app.now.offset_minutes};
+        text = tprint("Synced % · %", format_time(local), format_relative(ago));
     }
-    cut_left(*buttons, px(6));
-    pause_label := ifx app.demo_playing then "Pause" else "Resume";
-    if ui_button(pause_label, cut_left(*buttons, button_width(pause_label)), .GHOST) {
-        app.demo_playing = !app.demo_playing;
+    if !text.count return 0;
+    w := measure_text(fonts.regular, size, text);
+    x := r.x + r.w - w;
+    draw_text_in_rect(fonts.regular, size, rect(x, r.y, w + px(2), r.h), text, theme.text_secondary);
+    draw_circle(x - px(9), r.y + r.h * 0.5, px(3.5), dot);
+    if sync.error.count {
+        id := ui_id("sync-status");
+        io := ui_interact(id, rect(x - px(16), r.y, w + px(16), r.h));
+        ui_tooltip(id, io.hovered, sync.error);
     }
-    card_end();
+    return w + px(16);
 }
-
-button_width :: (label: string) -> float {
-    return max(measure_text(fonts.semibold, px(theme.font_size_body), label) + px(36), px(72));
-}
-
-randomize_demo_bars :: () {
-    for * app.demo_bars {
-        app.demo_seed = app.demo_seed * 1664525 + 1013904223;
-        it.target = 0.25 + 0.75 * ((app.demo_seed >> 8) & 0xFFFF) / 65535.0;
-    }
-    app.demo_progress_target = 0.25 + 0.75 * ((app.demo_seed >> 4) & 0xFF) / 255.0;
-}
-
-draw_animation_card :: (r: Rect, index: int) {
-    inner := card(r, "Animation", index);
-    dt := ui.dt * app.animation_speed;
-    if app.demo_playing {
-        app.demo_time += dt;
-        ui.animating = true;
-    }
-
-    // Springy bars.
-    bars := cut_top(*inner, px(120));
-    n := app.demo_bars.count;
-    gap := px(12);
-    bw := (bars.w - gap * (n - 1)) / n;
-    for * app.demo_bars {
-        it.target = clamp(it.target, 0, 1);
-        if spring_update(it, dt, 160, 0.42) ui.animating = true;
-        h := max(bars.h * clamp(it.value, 0, 1.2), px(6));
-        bar := rect(bars.x + it_index * (bw + gap), bars.y + bars.h - h, bw, h);
-        top := color_lerp(theme.accent_top, rgb(0xA78BFA), it_index / cast(float) (n - 1));
-        draw_rect_gradient(snap(bar), top, color_with_alpha(top, 0.35), px(6));
-    }
-
-    cut_top(*inner, px(22));
-    // Progress, eased toward its target.
-    progress_row := cut_top(*inner, px(18));
-    app.demo_progress = damp(app.demo_progress, app.demo_progress_target, 3, dt);
-    if abs(app.demo_progress - app.demo_progress_target) > 0.0005 ui.animating = true;
-    draw_text_in_rect(fonts.regular, px(13), progress_row, "Upload progress", theme.text_secondary);
-    draw_text_in_rect(fonts.semibold, px(13), progress_row, tprint("%%", cast(int) (app.demo_progress * 100 + 0.5), "%"), theme.text, .RIGHT);
-    cut_top(*inner, px(8));
-    track := snap(cut_top(*inner, px(8)));
-    draw_rect(track, theme.surface_hover, px(4));
-    fill := track;
-    fill.w = track.w * app.demo_progress;
-    draw_rect_gradient(fill, theme.accent_top, theme.accent_bottom, px(4));
-
-    cut_top(*inner, px(24));
-    // A pill sweeping back and forth on an eased curve.
-    lane := snap(cut_top(*inner, px(28)));
-    draw_rect(lane, color_with_alpha(theme.surface_hover, 0.6), lane.h * 0.5);
-    phase := app.demo_time * 0.6;
-    t := phase - floor(phase);
-    t = ifx t < 0.5 then ease_in_out_cubic(t * 2) else ease_in_out_cubic(2 - t * 2);
-    pill_w := px(64);
-    pill := rect(lane.x + px(3) + (lane.w - pill_w - px(6)) * t, lane.y + px(3), pill_w, lane.h - px(6));
-    draw_shadow(pill, pill.h * 0.5, px(10), color_with_alpha(theme.accent, 0.5), 0, px(2));
-    draw_rect_gradient(pill, theme.accent_top, theme.accent_bottom, pill.h * 0.5);
-    card_end();
-}
-
-draw_typography_card :: (r: Rect, index: int) {
-    inner := card(r, "Typography", index);
-    SAMPLE :: "The quick brown fox jumps over the lazy dog";
-    sizes := float.[12, 14, 16, 20, 28];
-    y := inner.y;
-    for sizes {
-        m := font_metrics(fonts.regular, px(it));
-        y += m.line_height + px(4);
-        draw_text(fonts.regular, px(12), inner.x, y, tprint("%px", cast(int) it), theme.text_muted);
-        font := ifx it >= 20 then fonts.semibold else fonts.regular;
-        draw_text(font, px(it), inner.x + px(56), y, SAMPLE, ifx it >= 20 then theme.text else theme.text_secondary);
-    }
-    y += px(22);
-    draw_text(fonts.regular, px(14), inner.x, y, tprint("FreeType rasterizes each glyph at its exact pixel size (here at %% scale), cached in a % x % atlas.", cast(int) (ui.scale * 100 + 0.5), "%", glyph_atlas.size, glyph_atlas.size), theme.text_muted);
-    card_end();
-}
-
-//
-// Other pages.
-//
-
-List_Item :: struct { title: string; detail: string; status: string; color: Color; }
-
-draw_projects :: (body: Rect) -> float {
-    items := List_Item.[
-        .{"Renderer",          "Direct3D 11 backend, flip model swap chain", "Shipped",     #run rgb(0x3DD68C)},
-        .{"Text",              "FreeType glyph cache with subpixel positioning", "Shipped", #run rgb(0x3DD68C)},
-        .{"macOS platform",    "Cocoa window and Metal backend",             "Planned",     #run rgb(0x7E93FF)},
-        .{"Linux platform",    "Wayland/X11 window and Vulkan backend",      "Planned",     #run rgb(0x7E93FF)},
-        .{"Text shaping",      "HarfBuzz for ligatures and complex scripts", "Exploring",   #run rgb(0xF5B14C)},
-        .{"Layout",            "Flexible rows and columns on top of rect cutting", "Exploring", #run rgb(0xF5B14C)},
-    ];
-    return draw_list(body, "Projects", items);
-}
-
-draw_activity :: (body: Rect) -> float {
-    items := List_Item.[
-        .{"Atlas grew",          "Glyph atlas doubled to keep every glyph resident", "2m ago",  #run rgb(0xA0A7B4)},
-        .{"Window resized",      "Swap chain buffers resized in place",            "5m ago",  #run rgb(0xA0A7B4)},
-        .{"DPI changed",         "Moved to a 150% monitor; glyphs re-rasterized",   "12m ago", #run rgb(0xA0A7B4)},
-        .{"Build succeeded",     "Shaders compiled to bytecode at build time",      "1h ago",  #run rgb(0x3DD68C)},
-        .{"Device created",      "Hardware adapter, feature level 11_1",            "1h ago",  #run rgb(0xA0A7B4)},
-    ];
-    return draw_list(body, "Recent", items);
-}
-
-draw_list :: (body: Rect, title: string, items: [] List_Item) -> float {
-    row_h := px(60);
-    r := body;
-    panel := cut_top(*r, px(22 + 18 + 14 + 18) + row_h * items.count);
-    inner := card(panel, title, 0);
-    for items {
-        row := cut_top(*inner, row_h);
-        id := ui_id(title, it_index);
-        w := ui_widget(id);
-        io := ui_interact(id, row);
-        ui_animate(*w.hover, ifx io.hovered then 1.0 else 0.0, 18);
-        if w.hover > 0 draw_rect(snap(rect_inset_xy(row, -px(10), px(3))), color_with_alpha(theme.surface_hover, w.hover * 0.7), px(theme.radius_control));
-        if it_index > 0 ui_divider(row.x, row.y, row.w);
-
-        text_area := rect_inset_xy(row, 0, px(10));
-        draw_text_in_rect(fonts.semibold, px(14), cut_top(*text_area, text_area.h * 0.5), it.title, theme.text);
-        draw_text_in_rect(fonts.regular, px(13), text_area, it.detail, theme.text_secondary);
-
-        // Status pill.
-        label_w := measure_text(fonts.semibold, px(12), it.status);
-        pill := snap(rect(row.x + row.w - label_w - px(24), row.y + (row.h - px(24)) * 0.5, label_w + px(24), px(24)));
-        draw_rect(pill, color_with_alpha(it.color, 0.14), pill.h * 0.5);
-        draw_text_in_rect(fonts.semibold, px(12), pill, it.status, it.color, .CENTER);
-    }
-    card_end();
-    return panel.y + panel.h;
-}
-
-draw_settings :: (body: Rect) -> float {
-    r := body;
-    panel := cut_top(*r, px(300));
-    left := cut_left(*panel, min(panel.w, px(520)));
-    draw_controls_card(left, 0);
-    return panel.y + panel.h;
-}
-
-//
-// Status bar.
-//
 
 draw_status_bar :: (area: Rect) {
-    draw_rect(area, theme.sidebar);
-    draw_rect(snap(rect(area.x, area.y, area.w, px(1))), theme.divider);
-    r := rect_inset_xy(area, px(16), 0);
-    size := px(12);
+    draw_rect(area, theme.chrome);
+    ui_divider(area.x, area.y, area.w, theme.border);
+    r := rect_inset_xy(area, px(14), 0);
+    size := px(theme.font_size_small);
+    sep :: (r: *Rect) {
+        x := r.x + px(8);
+        ui_vdivider(x, r.y + px(6), r.h - px(12), theme.border_strong);
+        cut_left(r, px(17));
+    }
+    item :: (r: *Rect, text: string, color: Color, mono := false) {
+        f := ifx mono then fonts.mono else fonts.regular;
+        w := draw_text_in_rect(f, px(theme.font_size_small), r.*, text, color, .LEFT, .{tabular = true});
+        cut_left(r, w);
+    }
 
-    active := app.was_animating || app.continuous_rendering;
-    dot_color := ifx active then theme.success else theme.text_muted;
-    draw_circle(r.x + px(4), r.y + r.h * 0.5, px(3.5), dot_color);
-    cut_left(*r, px(16));
-    left := ifx active then "Rendering" else "Idle, waiting for input";
-    w := draw_text_in_rect(fonts.regular, size, r, left, theme.text_secondary);
-    cut_left(*r, w + px(24));
-    mode := ifx APP_RELEASE then "release" else "debug";
-    draw_text_in_rect(fonts.regular, size, r, tprint("Direct3D 11  ·  % draw call  ·  % instances  ·  frame %  ·  %", renderer_stats.draw_calls, renderer_stats.instances, clock.frame_count, mode), theme.text_muted);
+    connected := sync.phase == .READY || sync.phase == .LOADING;
+    draw_circle(r.x + px(3), r.y + r.h * 0.5, px(3), ifx sync.auth_failed || sync.error.count then theme.held else ifx connected then theme.positive else theme.text_faint);
+    cut_left(*r, px(12));
+    item(*r, ifx sync.demo then "Sample data · offline" else "api.up.com.au", theme.text_secondary);
+    if api_stats.requests {
+        sep(*r);
+        item(*r, tprint("% requests · last % ms", format_grouped(api_stats.requests), cast(int) (api_stats.last_ms + 0.5)), theme.text_muted);
+    }
+    if store.accounts.count {
+        sep(*r);
+        item(*r, tprint("% accounts · % transactions", store.accounts.count, format_grouped(store.transactions.count)), theme.text_muted);
+        if store.transactions.count {
+            oldest := store.transactions[store.transactions.count - 1].day;
+            sep(*r);
+            item(*r, tprint("% since %", ifx sync.history_complete then "History" else "Loaded", format_date(oldest)), theme.text_muted);
+        }
+    }
+    if sync.pending_writes > 0 {
+        sep(*r);
+        item(*r, tprint("Saving % change%…", sync.pending_writes, ifx sync.pending_writes == 1 then "" else "s"), theme.held);
+    }
 
-    right := tprint("V: vsync %  ·  C: continuous %  ·  % Hz  ·  %% scale", ifx renderer_settings.vsync then "on" else "off", ifx app.continuous_rendering then "on" else "off", cast(int) (platform.refresh_hz + 0.5), cast(int) (ui.scale * 100 + 0.5), "%");
-    draw_text_in_rect(fonts.regular, size, r, right, theme.text_muted, .RIGHT);
+    hints := "Ctrl+1–7 pages · / search · F5 refresh · Tab focus";
+    minutes := AUTO_REFRESH_MINUTES[settings.auto_refresh];
+    auto := ifx minutes > 0 then tprint("Auto-refresh %", AUTO_REFRESH_LABELS[settings.auto_refresh]) else "Auto-refresh off";
+    right := tprint("%   ·   %", auto, hints);
+    if measure_text(fonts.regular, size, right) < r.w - px(40) draw_text_in_rect(fonts.regular, size, r, right, theme.text_muted, .RIGHT);
+}
+
+//
+// Toasts: brief confirmations and errors, bottom right, newest at the bottom.
+//
+
+draw_toasts :: (full: Rect) {
+    if !app.toasts.count return;
+    layer := draw_set_layer(.OVERLAY);
+    push_clip_absolute(full);
+    y := full.y + full.h - px(STATUS_BAR_HEIGHT) - px(12);
+    width := px(340);
+    i := app.toasts.count - 1;
+    while i >= 0 {
+        t := *app.toasts[i];
+        age := ui.time - t.born;
+        if age > t.life t.leaving = true;
+        ui_animate(*t.t, ifx t.leaving then 0.0 else 1.0, ifx t.leaving then 14.0 else 18.0);
+        if t.leaving && t.t <= 0.001 {
+            free(t.text);
+            array_ordered_remove_by_index(*app.toasts, i);
+            i -= 1;
+            continue;
+        }
+        if !t.leaving ui_wake_at(t.born + t.life);
+        e := ease_out_cubic(t.t);
+        lines := wrap_lines(fonts.regular, px(theme.font_size_body), t.text, width - px(44));
+        h := px(18) * lines.count + px(18);
+        y -= h * e + px(8) * e;
+        box := snap(rect(full.x + full.w - width - px(14) + px(24) * (1 - e), y, width, h));
+        push_opacity(e);
+        draw_shadow(box, px(4), px(16), theme.shadow, 0, px(5));
+        accent := ifx t.kind == .ERROR then theme.danger else ifx t.kind == .SUCCESS then theme.positive else theme.info;
+        draw_rect_outline(box, theme.panel_header, theme.border_strong, hairline(), px(theme.radius_panel));
+        draw_rect(snap(rect(box.x, box.y, px(2), box.h)), accent);
+        icon := ifx t.kind == .ERROR then Icon.ERROR else ifx t.kind == .SUCCESS then .CHECK else .INFO;
+        draw_icon(icon, box.x + px(18), box.y + px(9) + px(9), px(12), accent);
+        ty := box.y + px(9);
+        for lines {
+            draw_text_in_rect(fonts.regular, px(theme.font_size_body), rect(box.x + px(34), ty, box.w - px(44), px(18)), it, theme.text);
+            ty += px(18);
+        }
+        id := ui_id("toast", cast(int) (t.born * 1000));
+        ui.in_overlay = true;
+        io := ui_interact(id, box);
+        ui.in_overlay = false;
+        if io.hovered { t.born = ui.time - min(age, cast(float64) t.life - 1.5); ui.cursor = .HAND; }
+        if io.clicked t.leaving = true;
+        pop_opacity();
+        i -= 1;
+    }
+    pop_clip();
+    draw_set_layer(layer);
+}
+
+// Greedy word wrap into lines no wider than width.
+wrap_lines :: (font: *Font, size: float, text: string, width: float) -> [] string {
+    lines: [..] string;
+    lines.allocator = temp;
+    words := split(text, " ",, temp);
+    current := "";
+    for words {
+        candidate := ifx current.count then tprint("% %", current, it) else it;
+        if current.count && measure_text(font, size, candidate) > width {
+            array_add(*lines, current);
+            current = it;
+        } else {
+            current = candidate;
+        }
+    }
+    if current.count array_add(*lines, current);
+    return lines;
+}
+
+//
+// Confirmation dialog.
+//
+
+draw_confirm :: () {
+    c := *app.confirm;
+    if !c.open && c.t <= 0.001 return;
+    ui_animate(*c.t, ifx c.open then 1.0 else 0.0, 18);
+    lines := wrap_lines(fonts.regular, px(theme.font_size_body), c.detail, px(380));
+    h := px(110) + lines.count * px(19);
+    box := ui_modal_begin(px(420), h, c.t);
+    inner := rect_inset_xy(box, px(20), px(18));
+    draw_text_in_rect(fonts.semibold, px(15), cut_top(*inner, px(22)), c.title, theme.text);
+    cut_top(*inner, px(8));
+    for lines draw_text_in_rect(fonts.regular, px(theme.font_size_body), cut_top(*inner, px(19)), it, theme.text_secondary);
+    buttons := cut_bottom(*inner, px(theme.control_height));
+    destructive := c.kind == .DELETE_WEBHOOK || c.kind == .DISCONNECT;
+    action_r := cut_right(*buttons, ui_button_width(c.action));
+    cut_right(*buttons, px(8));
+    cancel_r := cut_right(*buttons, ui_button_width("Cancel"));
+    if c.open {
+        if ui_button(tprint("%##confirm", c.action), action_r, ifx destructive then Button_Style.DANGER else .PRIMARY) {
+            c.open = false;
+            if c.kind == {
+                case .DELETE_WEBHOOK; sync_delete_webhook(c.ref);
+                case .DISCONNECT;
+                    token_forget();
+                    settings.sample_data = false;
+                    settings_save();
+                    sync_disconnect();
+                    app.connect.token.count = 0;
+                case .RELOAD; sync_reload_all();
+            }
+        }
+        if ui_button("Cancel##confirm", cancel_r, .SECONDARY) || key_pressed(.ESCAPE) {
+            c.open = false;
+            input.key_pressed[Key.ESCAPE] = false;
+        }
+        if key_pressed(.ENTER) && ui.focus == 0 {
+            // Enter confirms only when nothing else is focused... and never for destructive actions.
+            if !destructive { c.open = false; if c.kind == .RELOAD sync_reload_all(); }
+        }
+    }
+    ui_modal_end();
+}
+
+//
+// Connect screen.
+//
+
+Connect_State :: struct {
+    token: Text_Buffer;
+    show_token: bool;
+    auto_connecting: bool;
+    focused: bool;   // The token field takes focus when the screen first shows.
+}
+
+draw_connect_screen :: (full: Rect) {
+    r := full;
+    top := cut_top(*r, px(TOP_BAR_HEIGHT));
+    draw_rect(top, theme.chrome);
+    ui_divider(top.x, top.y + top.h - hairline(), top.w, theme.border);
+    draw_brand(rect_inset_xy(top, px(14), 0));
+
+    st := *app.connect;
+    connecting := sync.phase == .CONNECTING;
+
+    if st.auto_connecting && connecting {
+        draw_spinner(r.x + r.w * 0.5, r.y + r.h * 0.5 - px(14), px(10), theme.accent);
+        draw_text_in_rect(fonts.regular, px(theme.font_size_body), rect(r.x, r.y + r.h * 0.5 + px(4), r.w, px(20)), ifx sync.demo then "Opening sample data…" else "Connecting to Up…", theme.text_secondary, .CENTER);
+        return;
+    }
+
+    width := px(480);
+    height := px(452);
+    box := snap(rect(r.x + (r.w - width) * 0.5, r.y + max((r.h - height) * 0.42, px(20)), width, height));
+    draw_rect_outline(box, theme.panel, theme.border, hairline(), px(theme.radius_panel));
+    inner := rect_inset_xy(box, px(28), px(24));
+
+    draw_caps(cut_top(*inner, px(14)), "Up API", theme.accent);
+    cut_top(*inner, px(6));
+    draw_text_in_rect(fonts.semibold, px(20), cut_top(*inner, px(28)), "Connect your Up account", theme.text);
+    cut_top(*inner, px(8));
+    intro := "Uppies reads your accounts and transactions with a personal access token. The token stays on this PC, encrypted for your Windows account, and is only ever sent to api.up.com.au.";
+    for wrap_lines(fonts.regular, px(theme.font_size_body), intro, inner.w) draw_text_in_rect(fonts.regular, px(theme.font_size_body), cut_top(*inner, px(19)), it, theme.text_secondary);
+    cut_top(*inner, px(6));
+    link_r := cut_top(*inner, px(20));
+    if ui_link("Get a token at api.up.com.au/getting_started", link_r) platform_open_url("https://api.up.com.au/getting_started");
+    draw_icon(.OPEN_EXTERNAL, link_r.x + measure_text(fonts.regular, px(theme.font_size_label), "Get a token at api.up.com.au/getting_started") + px(9), link_r.y + link_r.h * 0.5, px(10), theme.accent);
+
+    cut_top(*inner, px(18));
+    draw_caps(cut_top(*inner, px(14)), "Personal access token", theme.text_muted);
+    cut_top(*inner, px(6));
+    field_row := cut_top(*inner, px(32));
+    eye := cut_right(*field_row, px(32));
+    cut_right(*field_row, px(6));
+    flags := Text_Input_Flags.MONO;
+    if !st.show_token flags |= .PASSWORD;
+    if !st.focused && !connecting {
+        st.focused = true;
+        ui.focus = ui_id("token##connect");
+        ui.focus_visible = false;
+    }
+    _, submitted := ui_text_input("token##connect", field_row, *st.token, "up:yeah:…", flags);
+    if ui_icon_button("show-token", ifx st.show_token then Icon.HIDE else .VIEW, eye, ifx st.show_token then "Hide token" else "Show token", st.show_token) st.show_token = !st.show_token;
+
+    cut_top(*inner, px(10));
+    ui_checkbox("Remember on this PC (encrypted with Windows DPAPI)", cut_top(*inner, px(22)), *settings.remember_token);
+
+    cut_top(*inner, px(14));
+    buttons := cut_top(*inner, px(32));
+    token := trim(buffer_string(*st.token));
+    can_connect := token.count > 0 && !connecting;
+    connect_r := cut_left(*buttons, px(120));
+    if ui_button(ifx connecting then "Checking…##connect" else "Connect##connect", connect_r, .PRIMARY, enabled = can_connect) || (submitted && can_connect) {
+        sync_start(token, false);
+    }
+    if connecting && !sync.demo draw_spinner(connect_r.x + connect_r.w + px(16), connect_r.y + connect_r.h * 0.5, px(7));
+
+    if sync.connect_error.count {
+        cut_top(*inner, px(12));
+        error_lines := wrap_lines(fonts.regular, px(theme.font_size_label), sync.connect_error, inner.w - px(20));
+        er := cut_top(*inner, px(14) + error_lines.count * px(17));
+        draw_icon(.ERROR, er.x + px(6), er.y + px(14), px(11), theme.danger);
+        ty := er.y + px(6);
+        for error_lines {
+            draw_text_in_rect(fonts.regular, px(theme.font_size_label), rect(er.x + px(20), ty, er.w - px(20), px(17)), it, theme.danger);
+            ty += px(17);
+        }
+    }
+
+    // Sample data.
+    bottom := cut_bottom(*inner, px(58));
+    ui_divider(bottom.x, bottom.y, bottom.w, theme.border);
+    cut_top(*bottom, px(14));
+    sample_r := cut_left(*bottom, px(170));
+    sample_r.h = px(30);
+    if ui_button("Explore with sample data", sample_r, .SECONDARY, .LIGHTNING, enabled = !connecting) sync_start("", true);
+    note := rect(bottom.x + px(14), bottom.y, bottom.w - px(14), px(30));
+    draw_text_fit(fonts.regular, px(theme.font_size_label), rect(note.x, note.y, note.w, px(15)), "Two years of generated activity.", theme.text_muted);
+    draw_text_fit(fonts.regular, px(theme.font_size_label), rect(note.x, note.y + px(15), note.w, px(15)), "Nothing is sent anywhere.", theme.text_muted);
 }

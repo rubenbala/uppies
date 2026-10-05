@@ -1,5 +1,5 @@
 // The UI pipeline: every primitive (rounded rectangle, border, gradient, soft
-// shadow, glyph) is one 96-byte instance expanded to a quad here, so a whole
+// shadow, glyph, chart line or area column) is one 96-byte instance expanded to a quad here, so a whole
 // frame is a single instanced draw with no vertex or index buffer.
 //
 // Coordinates are physical pixels, origin top-left. Colors arrive as sRGB
@@ -19,17 +19,19 @@ SamplerState     atlas_sampler : register(s0);
 static const uint KIND_RECT   = 0;
 static const uint KIND_GLYPH  = 1;
 static const uint KIND_SHADOW = 2;
+static const uint KIND_LINE   = 3;
+static const uint KIND_AREA   = 4;
 
 struct Instance {
     float4 rect         : RECT;     // x0 y0 x1 y1
-    float4 uv           : UV;       // Glyph: atlas texel rect x0 y0 x1 y1.
+    float4 uv           : UV;       // Glyph: atlas texel rect. Line: endpoints. Area: top y at x0, x1; baseline.
     float4 radii        : RADII;    // Corner radii: top-left, top-right, bottom-right, bottom-left.
     float4 clip         : CLIP;     // x0 y0 x1 y1
     float4 color0       : COLOR0;   // Fill (gradient top), glyph color, shadow color.
     float4 color1       : COLOR1;   // Gradient bottom.
     float4 border_color : COLOR2;
     uint   kind         : KIND;
-    float4 params       : PARAMS;   // x = border width, y = shadow blur sigma.
+    float4 params       : PARAMS;   // x = border width, y = shadow blur sigma, z = line thickness.
 };
 
 struct VS_Out {
@@ -43,14 +45,18 @@ struct VS_Out {
     nointerpolation float4 border_color : COLOR2;
     nointerpolation uint   kind         : KIND;
     nointerpolation float4 params       : PARAMS;
+    nointerpolation float4 data         : DATA;     // The instance's raw uv (lines, areas).
 };
 
 VS_Out vs_main(uint vertex_id : SV_VertexID, Instance inst) {
     // Grow the quad to hold the antialiased edge (and a shadow's blur), then
     // clip it on the CPU's behalf: clipped-away pixels are never shaded.
-    float grow = 1.0;
+    // Areas tile side by side, so they only grow vertically (for the
+    // antialiased top edge); their left and right edges stay hard.
+    float2 grow = 1.0;
     if (inst.kind == KIND_GLYPH)  grow = 0.0;
     if (inst.kind == KIND_SHADOW) grow = 3.0 * inst.params.y + 1.0;
+    if (inst.kind == KIND_AREA)   grow = float2(0.0, 1.0);
 
     float2 lo = max(inst.rect.xy - grow, inst.clip.xy);
     float2 hi = min(inst.rect.zw + grow, inst.clip.zw);
@@ -71,6 +77,7 @@ VS_Out vs_main(uint vertex_id : SV_VertexID, Instance inst) {
     o.border_color = inst.border_color;
     o.kind         = inst.kind;
     o.params       = inst.params;
+    o.data         = inst.uv;
     return o;
 }
 
@@ -135,7 +142,31 @@ float dither(float2 pixel) {
     return (frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715)))) - 0.5) / 255.0;
 }
 
+// Distance from p to the segment a-b.
+float sd_segment(float2 p, float2 a, float2 b) {
+    float2 pa = p - a, ba = b - a;
+    float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6));
+    return length(pa - ba * h);
+}
+
 float4 ps_main(VS_Out i) : SV_Target {
+    if (i.kind == KIND_LINE) {
+        float d = sd_segment(i.pixel, i.data.xy, i.data.zw) - i.params.z * 0.5;
+        float a = saturate(0.5 - d) * i.color0.a;
+        return float4(i.color0.rgb * a, a);
+    }
+
+    if (i.kind == KIND_AREA) {
+        float tx    = saturate((i.pixel.x - i.rect.x) / max(i.rect.z - i.rect.x, 1e-5));
+        float top   = lerp(i.data.x, i.data.y, tx);
+        float cover = saturate(i.pixel.y - top + 0.5) * saturate(i.data.z - i.pixel.y + 0.5);
+        float t     = saturate((i.pixel.y - i.rect.y) / max(i.rect.w - i.rect.y, 1.0));
+        float4 fill = lerp(i.color0, i.color1, t);
+        fill.rgb += dither(i.pixel);
+        float a = fill.a * cover;
+        return float4(fill.rgb * a, a);
+    }
+
     if (i.kind == KIND_GLYPH) {
         float a = glyph_atlas.Sample(atlas_sampler, i.uv);
         a = text_coverage(a, i.color0.rgb) * i.color0.a;
