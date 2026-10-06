@@ -551,22 +551,36 @@ draw_toasts :: (full: Rect) {
     draw_set_layer(layer);
 }
 
-// Greedy word wrap into lines no wider than width.
+// Greedy word wrap into lines no wider than width. Each word is measured once
+// and a line's width is the sum of its words and spaces, so this is linear in
+// the text; the lines are slices of it.
 wrap_lines :: (font: *Font, size: float, text: string, width: float) -> [] string {
     lines: [..] string;
     lines.allocator = temp;
-    words := split(text, " ",, temp);
-    current := "";
-    for words {
-        candidate := ifx current.count then tprint("% %", current, it) else it;
-        if current.count && measure_text(font, size, candidate) > width {
-            array_add(*lines, current);
-            current = it;
-        } else {
-            current = candidate;
+    space_w := measure_text(font, size, " ");
+    start, end := 0;   // The current line is text[start..end).
+    line_w := 0.0;
+    i := 0;
+    while i < text.count {
+        j := i;
+        while j < text.count && text[j] != #char " " j += 1;
+        if j > i {
+            word_w := measure_text(font, size, slice(text, i, j - i));
+            if end == start {
+                start = i;
+                line_w = word_w;
+            } else if line_w + space_w * (i - end) + word_w > width {
+                array_add(*lines, slice(text, start, end - start));
+                start = i;
+                line_w = word_w;
+            } else {
+                line_w += space_w * (i - end) + word_w;
+            }
+            end = j;
         }
+        i = j + 1;
     }
-    if current.count array_add(*lines, current);
+    if end > start array_add(*lines, slice(text, start, end - start));
     return lines;
 }
 

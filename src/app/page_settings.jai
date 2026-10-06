@@ -29,13 +29,14 @@ draw_settings_page :: (r_in: Rect) {
     cut_top(*right, gap);
     // On a short window About sets its logo beside the name, so Diagnostics keeps room for its
     // readouts; shorter still, Diagnostics gives way and About takes the column.
-    stacked_h := about_panel_height(right.w, false);
+    disclaimer := disclaimer_lines(right.w);
+    stacked_h := about_panel_height(disclaimer.count, false);
     room := right.h - gap - px(DIAGNOSTICS_MIN_HEIGHT);
-    show_diagnostics := room >= about_panel_height(right.w, true);
+    show_diagnostics := room >= about_panel_height(disclaimer.count, true);
     about_compact := ifx show_diagnostics then room < stacked_h else right.h < stacked_h;
     about_r := right;
     if show_diagnostics {
-        about_r = cut_bottom(*right, about_panel_height(right.w, about_compact));
+        about_r = cut_bottom(*right, about_panel_height(disclaimer.count, about_compact));
         cut_bottom(*right, gap);
     }
     draw_display_panel(appear_begin(display_r, 3), st);
@@ -44,7 +45,7 @@ draw_settings_page :: (r_in: Rect) {
         draw_diagnostics_panel(appear_begin(right, 4));
         appear_end();
     }
-    draw_about_panel(appear_begin(about_r, 5), about_compact);
+    draw_about_panel(appear_begin(about_r, 5), about_compact, disclaimer);
     appear_end();
 }
 
@@ -276,16 +277,16 @@ ABOUT_TITLE :: 20.0;
 ABOUT_HERO_STACKED :: 16 + ABOUT_MARK + 10 + 26 + 20;   // Logo above the name and byline.
 ABOUT_HERO_COMPACT :: 16 + ABOUT_MARK;                  // Logo beside them.
 
-// The hero, the links, a divider, the disclaimer wrapped to the panel's width, and the copyright.
-about_panel_height :: (panel_w: float, compact: bool) -> float {
+// The hero, the links, a divider, the disclaimer's lines, and the copyright.
+about_panel_height :: (line_count: int, compact: bool) -> float {
     hero := ifx compact then ABOUT_HERO_COMPACT else ABOUT_HERO_STACKED;
-    return px(theme.panel_header_height) + px(hero) + px(12 + 22 + 14 + 13) + disclaimer_lines(panel_w).count * px(DISCLAIMER_LINE) + px(6 + 18 + 12);
+    return px(theme.panel_header_height) + px(hero) + px(12 + 22 + 14 + 13) + line_count * px(DISCLAIMER_LINE) + px(6 + 18 + 12);
 }
 
-draw_about_panel :: (r: Rect, compact: bool) {
+draw_about_panel :: (r: Rect, compact: bool, disclaimer: [] string) {
     content, _ := panel_begin(r, "About");
     inner := rect_inset_xy(content, px(16), 0);
-    cut_top(*inner, px(16) + max(r.h - about_panel_height(r.w, compact), 0) * 0.5);   // Centered when given more room than it needs.
+    cut_top(*inner, px(16) + max(r.h - about_panel_height(disclaimer.count, compact), 0) * 0.5);   // Centered when given more room than it needs.
     cx := inner.x + inner.w * 0.5;
 
     title_size := px(ABOUT_TITLE);
@@ -335,7 +336,7 @@ draw_about_panel :: (r: Rect, compact: bool) {
     cut_top(*inner, px(14));
     ui_divider(inner.x, inner.y, inner.w, theme.divider);
     cut_top(*inner, px(13));
-    for disclaimer_lines(r.w) draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted, .CENTER);
+    for disclaimer draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted, .CENTER);
     cut_top(*inner, px(6));
     draw_text_in_rect(fonts.regular, px(theme.font_size_small), cut_top(*inner, px(18)), "© 2026 Ruben Bala", theme.text_faint, .CENTER);
 }
