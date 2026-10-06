@@ -113,6 +113,33 @@ category_picker_items :: () -> [] Dropdown_Item, [] s32 {
     return items, map;
 }
 
+// Tag filter: "All tags", "Untagged", then each tag by name with how many
+// transactions carry it. Item -> tag index; -1 all, -2 untagged.
+tag_filter_items :: () -> [] Dropdown_Item, [] s32 {
+    order := NewArray(store.tags.count, s32,, temp);
+    for 0..order.count - 1 order[it] = cast(s32) it;
+    quick_sort(order, (a: s32, b: s32) -> int {
+        c := compare_nocase(store.tags[a].label, store.tags[b].label);
+        return ifx c then c else a - b;
+    });
+    items := NewArray(order.count + 2, Dropdown_Item,, temp);
+    map := NewArray(order.count + 2, s32,, temp);
+    items[0].label = "All tags"; map[0] = -1;
+    items[1].label = "Untagged"; map[1] = -2;
+    for order {
+        items[it_index + 2].label = store.tags[it].label;
+        if it < analytics.tags.count items[it_index + 2].detail = format_grouped(analytics.tags[it].count);
+        map[it_index + 2] = it;
+    }
+    return items, map;
+}
+
+tag_matches :: (t: *Transaction, filter: s32) -> bool {
+    if filter == -1 return true;
+    if filter == -2 return t.tag_count == 0;
+    return txn_has_tag(t, filter);
+}
+
 index_of_value :: (map: [] s32, value: s32) -> int {
     for map if it == value return it_index;
     return 0;

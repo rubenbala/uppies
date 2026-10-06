@@ -1,6 +1,6 @@
 // Transactions: find, compare and fix individual transactions.
 //
-// Toolbar filters (search, period, account, category, status, direction)
+// Toolbar filters (search, period, account, category, tag, status, direction)
 // narrow the list; the strip under it sums what is shown. Sorted by date the
 // list is grouped by day, each day's header carrying its money in and out.
 // Selecting a row opens the inspector on the right, where the category and
@@ -13,7 +13,7 @@ Transactions_State :: struct {
     category:  int;
     status:    int;   // 0 all, 1 held, 2 settled
     direction: int;   // 0 all, 1 in, 2 out
-    tag:       s32 = -1;   // Set from the Tags page.
+    tag:       s32 = -1;   // Tag index; -1 all, -2 untagged.
     custom:    Period;     // A period picked elsewhere (a month, a chart bar).
     has_custom: bool;
 
@@ -104,8 +104,13 @@ draw_transactions_page :: (r_in: Rect) {
     count_w := px(150);
     controls := bar;
     controls.w -= count_w;
-    search_w := clamp(controls.w - px(840), px(170), px(300));
+    search_w := clamp(controls.w - px(1040), px(170), px(300));
     search_r := cut_left(*controls, search_w);
+    // In a narrow window the dropdowns give up width before the status filter does.
+    status_options := string.["All", "Held", "Settled"];
+    status_w := ui_segmented_width(status_options);
+    dropdowns_w := px(132 + 150 + 172 + 140);
+    fit := clamp((controls.w - px(8 + 6 * 5) - status_w) / dropdowns_w, 0.7, 1.0);
     changed := false;
     c := ui_text_input(search_id, search_r, *st.search, "Search description, notes, tags, amounts…", .SEARCH);
     if c changed = true;
@@ -114,17 +119,24 @@ draw_transactions_page :: (r_in: Rect) {
     for PERIOD_LABELS period_items[it_index].label = it;
     if st.has_custom period_items[CUSTOM_PERIOD].label = custom_period_label(st.custom);
     if st.period >= period_items.count st.period = 0;
-    if ui_dropdown("period##txn", cut_left(*controls, px(132)), period_items, *st.period, popup_width = px(220)) changed = true;
+    if ui_dropdown("period##txn", cut_left(*controls, px(132) * fit), period_items, *st.period, popup_width = px(220)) changed = true;
     cut_left(*controls, px(6));
     acct_items, acct_map := account_filter_items();
-    if ui_dropdown("account##txn", cut_left(*controls, px(150)), acct_items, *st.account) changed = true;
+    if ui_dropdown("account##txn", cut_left(*controls, px(150) * fit), acct_items, *st.account) changed = true;
     cut_left(*controls, px(6));
     cat_items, cat_map := category_filter_items();
     st.category = clamp(st.category, 0, cat_items.count - 1);
-    if ui_dropdown("category##txn", cut_left(*controls, px(172)), cat_items, *st.category, popup_width = px(260)) changed = true;
+    if ui_dropdown("category##txn", cut_left(*controls, px(172) * fit), cat_items, *st.category, popup_width = px(260)) changed = true;
     cut_left(*controls, px(6));
-    status_options := string.["All", "Held", "Settled"];
-    if ui_segmented("status##txn", cut_left(*controls, ui_segmented_width(status_options)), status_options, *st.status) changed = true;
+    tag_items, tag_map := tag_filter_items();
+    tag_index := index_of_value(tag_map, st.tag);
+    if tag_map[tag_index] != st.tag { st.tag = -1; st.rows_key = 0; }   // The tag is gone.
+    if ui_dropdown("tag##txn", cut_left(*controls, px(140) * fit), tag_items, *tag_index, popup_width = px(240)) {
+        st.tag = tag_map[tag_index];
+        changed = true;
+    }
+    cut_left(*controls, px(6));
+    if ui_segmented("status##txn", cut_left(*controls, status_w), status_options, *st.status) changed = true;
     cut_left(*controls, px(6));
     direction_options := string.["In & out", "In", "Out"];
     dw := ui_segmented_width(direction_options);
@@ -132,7 +144,7 @@ draw_transactions_page :: (r_in: Rect) {
         if ui_segmented("direction##txn", cut_left(*controls, dw), direction_options, *st.direction) changed = true;
         cut_left(*controls, px(6));
     }
-    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag >= 0;
+    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1;
     if filtered && controls.w >= px(80) {
         if ui_button("Clear##txn-filters", cut_left(*controls, px(70)), .GHOST, .CLOSE) {
             st.search.count = 0;
@@ -332,7 +344,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         if st.status == 2 && txn.status != .SETTLED continue;
         if st.direction == 1 && txn.amount <= 0 continue;
         if st.direction == 2 && txn.amount >= 0 continue;
-        if st.tag >= 0 && !txn_has_tag(txn, st.tag) continue;
+        if !tag_matches(txn, st.tag) continue;
         if !txn_matches(txn, search) continue;
         array_add(*indices, cast(s32) i);
         if counts_as_flow(txn) {
@@ -407,18 +419,6 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
             ui_scroll_to(*st.table.scroll, st.table.selected * row_h, row_h, max(st.table.scroll.view, row_h * 4));
         }
     }
-}
-
-compare_nocase :: (a: string, b: string) -> int {
-    n := min(a.count, b.count);
-    for 0..n - 1 {
-        x := a[it];
-        y := b[it];
-        if x >= #char "A" && x <= #char "Z" x += 32;
-        if y >= #char "A" && y <= #char "Z" y += 32;
-        if x != y return cast(int) x - cast(int) y;
-    }
-    return a.count - b.count;
 }
 
 hash_key_string :: (s: string) -> u64 {
