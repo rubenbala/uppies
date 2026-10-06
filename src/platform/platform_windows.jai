@@ -120,6 +120,48 @@ platform_open_url :: (url: string) {
     ShellExecuteW(null, utf8_to_wide("open",, temp), utf8_to_wide(url,, temp), null, null, SW_SHOWNORMAL);
 }
 
+// Asks where to save a file, with the system's Save dialog, starting from
+// `suggested_name`. `type_name` and `extension` ("PDF document", "pdf")
+// describe the file; the extension is added when the name typed has none,
+// and saving over a file asks first. Blocks until the dialog closes.
+// Returns the path chosen (temporary storage, forward slashes), or false
+// when cancelled.
+platform_save_file_dialog :: (title: string, suggested_name: string, type_name: string, extension: string) -> path: string, ok: bool {
+    if !com_initialized {
+        // The dialog hosts shell extensions, which expect COM on this thread.
+        CoInitializeEx(null, COINIT_APARTMENTTHREADED);
+        com_initialized = true;
+    }
+    file: [MAX_SAVE_PATH] u16;
+    name := utf8_to_wide(suggested_name,, temp);
+    for 0..file.count - 2 {
+        if !name || !name[it] break;
+        file[it] = name[it];
+    }
+    // Pairs of display name and pattern, each ending in a zero, then one more.
+    filter := utf8_to_wide(tprint("% (*.%)\0*.%\0", type_name, extension, extension),, temp);
+
+    ofn: OPENFILENAMEW;
+    ofn.lStructSize = size_of(OPENFILENAMEW);
+    ofn.hwndOwner   = platform_window;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile   = file.data;
+    ofn.nMaxFile    = file.count;
+    ofn.lpstrTitle  = utf8_to_wide(title,, temp);
+    ofn.lpstrDefExt = utf8_to_wide(extension,, temp);
+    ofn.Flags       = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    chosen := GetSaveFileNameW(*ofn) != 0;
+
+    // The dialog took the keyboard and mouse: whatever was held when it
+    // opened was released there.
+    input_release_all();
+    platform.needs_redraw = true;
+    if !chosen return "", false;
+    path := wide_to_utf8(file.data,, temp);
+    for 0..path.count - 1 if path[it] == #char "\\" path[it] = #char "/";
+    return path, true;
+}
+
 platform_clipboard_get :: () -> string {   // Temporary storage.
     text := os_clipboard_get_text();
     result := copy_string(text,, temp);
@@ -285,6 +327,7 @@ current_cursor: Cursor;
 tracking_mouse: bool;
 in_size_move: bool;    // Inside Win32's modal move/resize loop.
 high_surrogate: u32;
+com_initialized: bool;
 
 MODAL_TIMER_ID :: 1;
 
@@ -515,10 +558,19 @@ win32_dwmapi   :: #library,system "dwmapi";
 win32_shell32  :: #library,system "shell32";
 win32_crypt32  :: #library,system "crypt32";
 win32_kernel32 :: #library,system "kernel32";
+win32_ole32    :: #library,system "ole32";
 
 WM_APP_WAKE   :: 0x8000 + 1;   // WM_APP + 1
 SW_SHOWNORMAL :: 1;
 CRYPTPROTECT_UI_FORBIDDEN :: 0x1;
+COINIT_APARTMENTTHREADED :: 0x2;
+
+// The Save dialog. OFN_NOCHANGEDIR comes from the Windows module.
+MAX_SAVE_PATH       :: 1024;
+OFN_OVERWRITEPROMPT :: 0x2;
+OFN_HIDEREADONLY    :: 0x4;
+OFN_PATHMUSTEXIST   :: 0x800;
+OFN_EXPLORER        :: 0x80000;
 
 win32_bcrypt :: #library,system "bcrypt";
 
@@ -599,3 +651,4 @@ ShellExecuteW :: (hwnd: HWND, operation: *u16, file: *u16, parameters: *u16, dir
 GetEnvironmentVariableW :: (name: *u16, buffer: *u16, size: u32) -> u32 #foreign win32_kernel32;
 CryptProtectData :: (data_in: *DATA_BLOB, description: *u16, entropy: *DATA_BLOB, reserved: *void, prompt: *void, flags: u32, data_out: *DATA_BLOB) -> s32 #foreign win32_crypt32;
 CryptUnprotectData :: (data_in: *DATA_BLOB, description: **u16, entropy: *DATA_BLOB, reserved: *void, prompt: *void, flags: u32, data_out: *DATA_BLOB) -> s32 #foreign win32_crypt32;
+CoInitializeEx :: (reserved: *void, flags: u32) -> s32 #foreign win32_ole32;

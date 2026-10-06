@@ -15,12 +15,13 @@ src/render/                  Everything that turns a frame into pixels
     renderer.jai             Backend interface, stats, settings
     d3d11/                   Direct3D 11 backend + its shader (ui.hlsl)
 src/core/json.jai            JSON parser (tree) and string escaping
+src/core/pdf.jai             PDF writer: pages of text, lines, rectangles and paths in the standard fonts
 src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
 src/core/format.jai          Money (integer cents) and number formatting
 src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
-src/app/                     The console: sync engine, analytics, pages, charts, inspector, test scripts
+src/app/                     The console: sync engine, analytics, pages, charts, inspector, printing, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
 assets/icon.png              256 px icon master; build.jai turns it into the exe's icon
 ```
@@ -154,6 +155,29 @@ another token is rejected. Test runs can use `-data-dir PATH` and `-cache-demo`.
 Timers (caret blink, tooltip delay, toasts, auto-refresh, relative times) don't keep the loop
 running: they call `ui_wake_at`, and the loop sleeps until then. `ui.time` is wall-clock;
 animations step by `dt`.
+
+## Printing
+
+Documents are saved as PDFs, written by the app itself (no library, no print driver), in three
+layers:
+
+- `core/pdf.jai` writes the file: pages of text, lines, rectangles and Bézier paths, in
+  top-left coordinates like the UI. Text uses Helvetica and Courier, which every PDF reader
+  has built in, so nothing is embedded and a page is a few kilobytes; UTF-8 is written as
+  WinAnsi (Western European text and the usual typography; emoji are left out, anything else
+  prints as "?"). Widths come from the fonts' metrics, so text can be measured, wrapped and
+  aligned.
+- `app/print.jai` is the page design shared by every document (`Print_Doc`): the Uppies
+  header, blocks that flow down the page and onto new pages (title, amount, sections of
+  label/value fields, notes), a footer on every page saying it was made with Uppies, when,
+  and the page number, and saving through the Save dialog (`platform_save_file_dialog`).
+- One file per kind of document. `app/print_transaction.jai` is the transaction record behind
+  the inspector's print button (Ctrl+P). A new document (a monthly statement, a tag's report)
+  is a procedure that calls `print_begin`, the blocks and `print_finish`, then `print_save`.
+
+Everything is built in temporary storage within one frame. The self-test checks that a
+transaction's PDF and a multi-page one have valid cross-references, and the `pdf PATH` script
+step saves the inspected transaction without the dialog.
 
 ## Next steps
 

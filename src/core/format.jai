@@ -1,5 +1,6 @@
 // Number and money formatting. Money is always integer cents (the API's
-// valueInBaseUnits): no floating point anywhere near a balance.
+// valueInBaseUnits): no floating point anywhere near a balance. Also UTF-8
+// decoding, for the text drawing and the PDF writer.
 
 MINUS_SIGN :: "−";   // A real minus: as wide as the plus, unlike a hyphen.
 
@@ -108,4 +109,26 @@ format_foreign :: (currency: string, value: string) -> string {
 
 format_count :: (n: s64, singular: string, plural: string) -> string {
     return tprint("% %", format_grouped(n), ifx n == 1 then singular else plural);
+}
+
+// Decodes the UTF-8 code point at text[i.*] and moves i past it. Malformed
+// bytes come out as U+FFFD.
+next_code_point :: (text: string, i: *int) -> u32 {
+    b0 := cast(u32) text[i.*];
+    i.* += 1;
+    if b0 < 0x80 return b0;
+    extra: int;
+    cp: u32;
+    if      (b0 & 0xE0) == 0xC0 { cp = b0 & 0x1F; extra = 1; }
+    else if (b0 & 0xF0) == 0xE0 { cp = b0 & 0x0F; extra = 2; }
+    else if (b0 & 0xF8) == 0xF0 { cp = b0 & 0x07; extra = 3; }
+    else return 0xFFFD;
+    for 1..extra {
+        if i.* >= text.count return 0xFFFD;
+        b := cast(u32) text[i.*];
+        if (b & 0xC0) != 0x80 return 0xFFFD;
+        cp = (cp << 6) | (b & 0x3F);
+        i.* += 1;
+    }
+    return cp;
 }

@@ -282,26 +282,6 @@ fonts_clear_cache :: () {
     atlas_reset(glyph_atlas.size);
 }
 
-next_code_point :: (text: string, i: *int) -> u32 {
-    b0 := cast(u32) text[i.*];
-    i.* += 1;
-    if b0 < 0x80 return b0;
-    extra: int;
-    cp: u32;
-    if      (b0 & 0xE0) == 0xC0 { cp = b0 & 0x1F; extra = 1; }
-    else if (b0 & 0xF0) == 0xE0 { cp = b0 & 0x0F; extra = 2; }
-    else if (b0 & 0xF8) == 0xF0 { cp = b0 & 0x07; extra = 3; }
-    else return 0xFFFD;
-    for 1..extra {
-        if i.* >= text.count return 0xFFFD;
-        b := cast(u32) text[i.*];
-        if (b & 0xC0) != 0x80 return 0xFFFD;
-        cp = (cp << 6) | (b & 0x3F);
-        i.* += 1;
-    }
-    return cp;
-}
-
 #scope_file
 
 SUBPIXEL_BINS      :: 4;

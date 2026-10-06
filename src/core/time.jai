@@ -71,6 +71,7 @@ days_in_month :: (key: int) -> s64 { return first_day_of_month(key + 1) - first_
 MONTH_SHORT :: string.["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 MONTH_LONG  :: string.["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 WEEKDAY_SHORT :: string.["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+WEEKDAY_LONG  :: string.["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 // "2024-08-05T05:16:50+10:00", "2024-08-05T05:16:50.123Z". Returns false on
 // anything else.
@@ -158,6 +159,12 @@ format_weekday_date :: (day: s64, today: s64) -> string {
     w := WEEKDAY_SHORT[weekday_from_days(day)];
     if civil_from_days(today).year == d.year return tprint("% % %", w, d.day, MONTH_SHORT[d.month - 1]);
     return tprint("% % % %", w, d.day, MONTH_SHORT[d.month - 1], d.year);
+}
+
+// "Tuesday 6 October 2026": for print, where there is room to spell it out.
+format_date_long :: (day: s64) -> string {
+    d := civil_from_days(day);
+    return tprint("% % % %", WEEKDAY_LONG[weekday_from_days(day)], d.day, MONTH_LONG[d.month - 1], d.year);
 }
 
 // "Oct 2026"

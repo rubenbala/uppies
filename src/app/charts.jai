@@ -14,15 +14,16 @@ Chart_Anim :: struct {
 
 chart_anims: Table(UI_Id, Chart_Anim);
 
-// Animated copies of `targets` (same length), retained per chart.
-chart_animate :: (id: UI_Id, targets: [] float, speed := 12.0) -> [] float {
+// Animated copies of `targets` (same length), retained per chart. A new
+// shape starts from `start` when given (same length), else from zero.
+chart_animate :: (id: UI_Id, targets: [] float, speed := 12.0, start: [] float = .[]) -> [] float {
     anim := table_find_pointer(*chart_anims, id);
     if !anim anim = table_add(*chart_anims, id, .{});
     fresh := anim.values.count != targets.count;
     if fresh {
-        // A new shape grows from zero.
         array_resize(*anim.values, targets.count);
-        for * anim.values it.* = 0;
+        if start.count == targets.count for * anim.values it.* = start[it_index];
+        else for * anim.values it.* = 0;
     }
     anim.last_frame = ui.frame;
     for i: 0..targets.count - 1 ui_animate(*anim.values[i], targets[i], speed);
@@ -279,23 +280,36 @@ draw_balance_chart :: (label: string, r: Rect, balances: [] s64, first_day: s64,
     for balances { lo = min(lo, it); hi = max(hi, it); }
     span := max(cast(float64) (hi - lo), 100.0);
     if lo > 0 && cast(float64) lo < span * 1.5 lo = 0;
-    step := nice_step(max(cast(float64) (hi - lo), 100.0) / 100.0, 4) * 100.0;
+    tick_span := max(cast(float64) (hi - lo), 100.0);
+    step := nice_step(tick_span / 100.0, 4) * 100.0;
     axis_lo := floor(cast(float64) lo / step) * step;
     axis_hi := ceil(cast(float64) hi / step) * step;
     if axis_hi <= axis_lo axis_hi = axis_lo + step;
+
+    // The axis glides with the line (same array, same speed), so every
+    // in-between frame is a blend of two in-bounds frames and the line
+    // never leaves the plot. A new shape grows from zero, so its axis
+    // starts out wide enough to hold zero.
+    targets := NewArray(n + 3, float,, temp);
+    start := NewArray(n + 3, float,, temp);
+    for balances targets[it_index] = cast(float) it;
+    targets[n], targets[n + 1], targets[n + 2] = cast(float) axis_lo, cast(float) axis_hi, cast(float) tick_span;
+    start[n], start[n + 1], start[n + 2] = cast(float) min(axis_lo, 0.0), cast(float) max(axis_hi, 0.0), cast(float) tick_span;
+    animated := chart_animate(id, targets, 22, start);
+    values := array_view(animated, 0, n);
+    axis_lo = animated[n];
+    axis_hi = max(cast(float64) animated[n + 1], axis_lo + 1);
+    step = nice_step(max(cast(float64) animated[n + 2], 100.0) / 100.0, 4) * 100.0;
+
     scale := plot.h / cast(float) (axis_hi - axis_lo);
     y_of :: (value: float, plot: Rect, axis_lo: float64, scale: float) -> float {
         return plot.y + plot.h - (value - cast(float) axis_lo) * scale;
     }
-    v := axis_lo;
+    v := ceil(axis_lo / step - 0.001) * step;
     while v <= axis_hi + 1 {
-        draw_y_tick(plot, y_of(cast(float) v, plot, axis_lo, scale), format_money_compact(cast(s64) v), v == 0);
+        draw_y_tick(plot, y_of(cast(float) v, plot, axis_lo, scale), format_money_compact(cast(s64) v), abs(v) < step * 0.001);
         v += step;
     }
-
-    targets := NewArray(n, float,, temp);
-    for balances targets[it_index] = cast(float) it;
-    values := chart_animate(id, targets, 14);
 
     dx := plot.w / (n - 1);
     base := y_of(cast(float) max(axis_lo, 0.0), plot, axis_lo, scale);

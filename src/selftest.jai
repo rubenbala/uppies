@@ -192,6 +192,52 @@ selftest :: () -> int {
     check(before.first == days_from_civil(2026, 8, 1) && before.last == days_from_civil(2026, 8, 31), tprint("whole month compares with the month before: %", period_label(before)));
     check(format_change_percent(2000, 100) == "×20", tprint("big increases read as multiples: %", format_change_percent(2000, 100)));
 
+    // Printing: a transaction makes a well-formed PDF, and so does a
+    // document long enough to need several pages.
+    pdf := print_transaction_pdf(0);
+    check(begins_with(pdf, "%PDF-1.4\n") && ends_with(pdf, "%%EOF\n"), tprint("transaction PDF (% bytes)", pdf.count));
+    check(pdf_cross_references_ok(pdf), "every cross-reference in the transaction PDF points at its object");
+    long: Print_Doc;
+    print_begin(*long, "Test", "Long document");
+    for 1..90 print_field(*long, tprint("Field %", it), "A value long enough that it has to wrap onto a second line in the value column of the page.");
+    long_pages := long.pdf.pages.count;
+    pdf = print_finish(*long);
+    check(long_pages > 1 && pdf_cross_references_ok(pdf), tprint("a long PDF flows onto % pages", long_pages));
+    e := pdf_encode("é–“”−•€");
+    check(e.count == 7 && e[0] == 0xE9 && e[1] == 0x96 && e[2] == 0x93 && e[3] == 0x94 && e[4] == 0x96 && e[5] == 0x95 && e[6] == 0x80, "PDF text in WinAnsi");
+    check(pdf_encode("Pizza 🍕 日本") == "Pizza  ??", tprint("emoji left out, the rest '?': \"%\"", pdf_encode("Pizza 🍕 日本")));
+    lines := pdf_wrap(.REGULAR, 10, "Wraps at spaces, and breaks a3f9c1e2-7b4d-4e8a-9c6f-0d2b5e8a1f47 between characters.\nKeeps line breaks.", 60);
+    fits := lines.count > 3;
+    for lines if pdf_measure(.REGULAR, 10, it) > 60 fits = false;
+    check(fits && lines[lines.count - 1] == "breaks.", tprint("PDF text wraps to its width (% lines)", lines.count));
+    name := print_file_name("Transaction", " A/B: \"C\"? ", "2026-10-06");
+    check(name == "Transaction - A B C - 2026-10-06.pdf", tprint("file names drop what Windows doesn't allow: %", name));
+
     print("\n% failure(s)\n", failures);
     return ifx failures then 1 else 0;
+}
+
+#scope_file
+
+// Follows startxref to the cross-reference table and checks that each entry
+// lands on "N 0 obj": what a PDF reader needs to find anything.
+pdf_cross_references_ok :: (pdf: string) -> bool {
+    at := find_index_from_right(pdf, "startxref\n");
+    if at < 0 return false;
+    xref, xref_ok := string_to_int(slice(pdf, at + 10, pdf.count - at - 10));
+    if !xref_ok || xref <= 0 || xref >= pdf.count return false;
+    table := slice(pdf, xref, pdf.count - xref);
+    if !begins_with(table, "xref\n0 ") return false;
+    count, count_ok := string_to_int(slice(table, 7, table.count - 7));
+    if !count_ok || count < 2 return false;
+    first := find_index_from_left(table, "0000000000 65535 f \n");
+    if first < 0 return false;
+    for 1..count - 1 {
+        entry := xref + first + it * 20;
+        if entry + 20 > pdf.count return false;
+        offset, offset_ok := string_to_int(slice(pdf, entry, 10));
+        if !offset_ok || offset <= 0 || offset >= pdf.count return false;
+        if !begins_with(slice(pdf, offset, pdf.count - offset), tprint("% 0 obj\n", it)) return false;
+    }
+    return true;
 }

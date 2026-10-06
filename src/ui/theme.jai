@@ -152,4 +152,5 @@ Icon :: enum u32 {
     CLOCK          :: 0xE823;
     GLOBE          :: 0xE774;
     NOTE           :: 0xE70B;
+    PRINT          :: 0xE749;
 }

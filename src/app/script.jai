@@ -6,6 +6,7 @@
 //   wait SECONDS      let the app run (animations, sample-data loading)
 //   page NAME         overview, transactions, accounts, spending, tags, webhooks, settings
 //   shot PATH         save the next frame as a PNG
+//   pdf PATH          save the transaction open in the inspector as a PDF (no dialog)
 //   key NAME          press a key for one frame: DOWN, UP, ENTER, ESCAPE, TAB, F5, A..Z, 0..9
 //   ctrl NAME         the same with Ctrl held
 //   text STRING       type text
@@ -78,6 +79,11 @@ script_frame :: () {
                 free(script.shot_path);
                 script.shot_path = copy_string(arg);
                 return;   // One shot per frame.
+            case "pdf";
+                index := store_find_transaction(*store, app.txn.selected_id);
+                if index < 0 log_error("Script: pdf needs a transaction open in the inspector\n");
+                else if write_entire_file(arg, print_transaction_pdf(index)) log("Saved %\n", arg);
+                else log_error("Could not save %\n", arg);
             case "key"; #through;
             case "ctrl";
                 code := key_code(arg);

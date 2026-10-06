@@ -1,6 +1,6 @@
 // Platform layer: window, input, time, cursor, and the few OS services the
 // app needs (clipboard, opening links, local time, per-user storage, secret
-// storage, waking the UI from another thread).
+// storage, a Save dialog, waking the UI from another thread).
 //
 // Everything OS-specific lives behind this file. The rest of the app only
 // sees `platform` and `input` and the procedures declared here; each OS

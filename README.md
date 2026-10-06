@@ -10,7 +10,7 @@ Pages sit in a tab bar along the top (there is no sidebar):
 | Page         | Answers                                                                 |
 |--------------|-------------------------------------------------------------------------|
 | Overview     | Where do I stand? Net position, balances with 30-day trends, cash flow, this month's spending, recent activity, and what needs attention (holds, uncategorised purchases, sync problems). |
-| Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags. Ctrl+click (or Shift+click) several to tag them all at once. |
+| Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags, or save the transaction as a PDF. Ctrl+click (or Shift+click) several to tag them all at once. |
 | Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Ctrl+click (or Shift+click) several to see them added together. |
 | Spending     | Where the money goes: categories grouped by parent with comparisons, 12-month stacked chart, top merchants. |
 | Tags         | What each tag cost, by category and by month.                           |
@@ -63,7 +63,7 @@ Command-line options, mostly for testing:
 | `-selftest`            | Run the parser/store/format/DPAPI checks and exit (0 = pass)      |
 | `-size 1440x900`       | Initial window size (logical units)                               |
 | `-page spending`       | Open on a page                                                    |
-| `-script "steps"`      | Drive the app off screen and save PNGs (see `src/app/script.jai`) |
+| `-script "steps"`      | Drive the app off screen and save PNGs and PDFs (see `src/app/script.jai`) |
 | `-hidden -quit-after N`| Run off screen for N seconds and report frames drawn and CPU time |
 | `-continuous`          | Render every frame (benchmarking)                                 |
 
@@ -78,6 +78,7 @@ Scripted and timed runs never read or write the saved token or settings.
 | F5 or Ctrl+R            | Refresh from Up                               |
 | ↑ ↓ PgUp PgDn Home End  | Move through the focused table                |
 | Ctrl+click, Shift+click | Choose several transactions, to tag them together, or several accounts, to add them together |
+| Ctrl+P                  | Save the transaction in the inspector as a PDF |
 | Esc                     | Close a menu, clear a search, close the inspector |
 | Tab / Shift+Tab         | Move keyboard focus; Enter or Space activates |
 

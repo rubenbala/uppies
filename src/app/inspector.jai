@@ -24,8 +24,13 @@ draw_inspector :: (r: Rect, st: *Inspector_State, index: s32) -> bool {
     close := false;
     content, header := panel_begin(r, "Transaction");
     close_r := cut_right(*header, px(26));
+    print_r := cut_right(*header, px(26));
     if ui_icon_button("close##inspector", .CLOSE, close_r, "Close (Esc)") close = true;
     if index < 0 || index >= store.transactions.count return close;
+    if ui_icon_button("print##inspector", .PRINT, print_r, "Save as PDF (Ctrl+P)") || (ctrl_letter_pressed(#char "P") && !ui.modal_prev) {
+        // The Save dialog blocks until it closes; the frame carries on after.
+        save_transaction_pdf(index);
+    }
     t := *store.transactions[index];
 
     // Switching transactions: content cross-fades and the form resets.

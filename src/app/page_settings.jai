@@ -1,4 +1,4 @@
-// Settings: connection, data, display, diagnostics, keys.
+// Settings: connection, data, display, diagnostics, about, keys.
 
 Settings_State :: struct {
     new_token: Text_Buffer;
@@ -27,9 +27,13 @@ draw_settings_page :: (r_in: Rect) {
 
     display_r := cut_top(*right, px(208));
     cut_top(*right, gap);
+    about_r := cut_bottom(*right, px(120));
+    cut_bottom(*right, gap);
     draw_display_panel(appear_begin(display_r, 3), st);
     appear_end();
     draw_diagnostics_panel(appear_begin(right, 4));
+    appear_end();
+    draw_about_panel(appear_begin(about_r, 5));
     appear_end();
 }
 
@@ -246,6 +250,19 @@ draw_diagnostics_panel :: (r: Rect) {
         h := max(graph.h * v / peak, px(1));
         draw_rect(rect(graph.x + i * bw + px(1), graph.y + graph.h - h, max(bw - px(2), 1.0), h), color_with_alpha(theme.chart_line, 0.35 + 0.65 * i / cast(float) n), px(1));
     }
+}
+
+draw_about_panel :: (r: Rect) {
+    content, _ := panel_begin(r, "About");
+    inner := rect_inset_xy(content, px(16), px(10));
+    draw_field(cut_top(*inner, px(22)), "Made by", "Ruben Bala");
+    link_row :: (r: Rect, label: string, text: string, url: string) {
+        label_w := px(112);
+        draw_text_in_rect(fonts.regular, px(theme.font_size_label), rect(r.x, r.y, label_w, r.h), label, theme.text_muted);
+        if ui_link(text, rect(r.x + label_w, r.y, r.w - label_w, r.h)) platform_open_url(url);
+    }
+    link_row(cut_top(*inner, px(22)), "Website", "ruben.net.au##about", "https://ruben.net.au");
+    link_row(cut_top(*inner, px(22)), "Source", "github.com/rubenbala/uppies##about", "https://github.com/rubenbala/uppies");
 }
 
 draw_keys_panel :: (r: Rect) {
