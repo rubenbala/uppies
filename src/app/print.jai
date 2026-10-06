@@ -46,8 +46,6 @@ PRINT_RULE      :: #run rgb(0xD9DDE2);
 PRINT_HAIRLINE  :: #run rgb(0xECEEF1);
 PRINT_POSITIVE  :: #run rgb(0x15804D);
 PRINT_HELD      :: #run rgb(0x9A6200);
-PRINT_HELD_WASH :: #run rgb(0xFBF1DE);
-PRINT_WASH      :: #run rgb(0xF1F3F5);
 
 // Starts a document on its first page. `title` names the file in PDF
 // readers' title bars.
@@ -99,21 +97,10 @@ print_title :: (doc: *Print_Doc, text: string) {
     doc.y += 4;
 }
 
-// A headline figure, with an optional badge after it ("Held").
-print_amount :: (doc: *Print_Doc, text: string, color: Color, badge := "", badge_color: Color = 0, badge_fill: Color = 0) {
-    SIZE :: 30.0;
+// A headline figure.
+print_amount :: (doc: *Print_Doc, text: string, color: Color) {
     print_room(doc, 40);
-    baseline := doc.y + 30;
-    w := pdf_text(*doc.pdf, PRINT_MARGIN, baseline, .BOLD, SIZE, text, color);
-    if badge.count {
-        label := to_upper_temp(badge);
-        lw := pdf_measure(.BOLD, 7.5, label, 0.6);
-        h := 17.0;
-        x := PRINT_MARGIN + w + 12;
-        y := baseline - SIZE * 0.36 - h * 0.5;   // Centred on the figures' height.
-        pdf_rect(*doc.pdf, x, y, lw + 16, h, ifx badge_fill then badge_fill else PRINT_WASH, h * 0.5);
-        pdf_text(*doc.pdf, x + 8, y + 11.3, .BOLD, 7.5, label, ifx badge_color then badge_color else PRINT_SECONDARY, 0.6);
-    }
+    pdf_text(*doc.pdf, PRINT_MARGIN, doc.y + 30, .BOLD, 30, text, color);
     doc.y += 42;
 }
 

@@ -18,12 +18,8 @@ print_transaction_pdf :: (index: s32) -> string {
     print_begin(*doc, "Transaction", t.description);
 
     print_title(*doc, t.description);
-    held := t.status == .HELD;
-    print_amount(*doc, format_money(t.amount, .ALWAYS), ifx t.amount > 0 then PRINT_POSITIVE else PRINT_TEXT,
-                 ifx held then "Held" else "Settled", ifx held then PRINT_HELD else PRINT_SECONDARY, ifx held then PRINT_HELD_WASH else PRINT_WASH);
-    when := tprint("% at %", format_date_long(t.day), format_time(t.created));
-    if held when = tprint("%, waiting to settle", when);
-    print_caption(*doc, when);
+    print_amount(*doc, format_money(t.amount, .ALWAYS), ifx t.amount > 0 then PRINT_POSITIVE else PRINT_TEXT);
+    print_caption(*doc, tprint("% at %", format_date_long(t.day), format_time(t.created)));
 
     print_section(*doc, "Summary");
     print_field(*doc, "Account", account_name(*store, t.account));
@@ -43,6 +39,8 @@ print_transaction_pdf :: (index: s32) -> string {
     print_field(*doc, "Tags", join(..tags, separator = ", ",, temp));
 
     print_section(*doc, "Payment");
+    if t.status == .HELD print_field(*doc, "Status", "Held, waiting to settle", color = PRINT_HELD);
+    else                 print_field(*doc, "Status", "Settled");
     print_field(*doc, "Type", t.transaction_type);
     if t.card_method != .NONE print_field(*doc, "Method", CARD_METHOD_NAMES[t.card_method]);
     if t.card_suffix.count print_field(*doc, "Card", tprint("•••• %", t.card_suffix));
