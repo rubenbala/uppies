@@ -43,6 +43,10 @@ Theme :: struct {
 
     shadow         := #run rgba(0x000000, 150);
 
+    brand_top      := #run rgb(0xFF9C6E);   // The app icon's plate and glyph (assets/icon.png).
+    brand_bottom   := #run rgb(0xEE5068);
+    brand_glyph    := #run rgb(0xFFFFFF);
+
     radius_panel   := 4.0;
     radius_control := 3.0;
     control_height := 28.0;

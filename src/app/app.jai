@@ -280,15 +280,35 @@ draw_console :: (full: Rect) {
 }
 
 draw_brand :: (r: Rect) -> float {
-    mark := snap(rect(r.x, r.y + (r.h - px(18)) * 0.5, px(18), px(18)));
-    draw_rect(mark, theme.accent, px(3));
-    // An upward chevron from two short strokes.
-    cx := mark.x + mark.w * 0.5;
-    cy := mark.y + mark.h * 0.56;
-    draw_line(cx - px(4.5), cy + px(2), cx, cy - px(2.5), px(2), theme.on_accent);
-    draw_line(cx, cy - px(2.5), cx + px(4.5), cy + px(2), px(2), theme.on_accent);
+    mark := snap(rect(r.x, r.y + (r.h - px(20)) * 0.5, px(20), px(20)));
+    draw_brand_mark(mark);
     tw := draw_text_in_rect(fonts.semibold, px(14), rect(mark.x + mark.w + px(9), r.y, px(100), r.h), "Uppies", theme.text);
     return mark.w + px(9) + tw;
+}
+
+// The app icon (assets/icon.png) drawn from primitives, so it is sharp at
+// any scale: a "U" whose right arm rises into an arrow, on a gradient plate.
+// Glyph coordinates are the icon's, in which the plate is 224 units across.
+draw_brand_mark :: (mark: Rect) {
+    draw_rect_gradient(mark, theme.brand_top, theme.brand_bottom, mark.w * 0.26);
+
+    k  := mark.w / 224;
+    ox := mark.x + 61.5 * k;   // Glyph origin: the left arm's centerline...
+    oy := mark.y + 90.5 * k;   // ...where the arm's straight part begins.
+    stroke := 31 * k;
+    color  := theme.brand_glyph;
+
+    // The bowl: the bottom of a rounded outline (borders draw inward), with
+    // its top cut away where the left arm ends.
+    push_clip(rect(mark.x, oy + 4 * k, mark.w, mark.h));
+    bowl := rect(ox - 15.5 * k, oy - 40 * k, 105 * k, 148.5 * k);
+    draw_rect_ex(bowl, 0, 0, .[0, 0, bowl.w * 0.5, bowl.w * 0.5], stroke, color);
+    pop_clip();
+
+    draw_circle(ox, oy + 4 * k, stroke * 0.5, color);                         // Left arm's cap.
+    draw_line(ox + 74 * k, oy + 8 * k, ox + 74 * k, oy - 34 * k, stroke, color);  // Right arm.
+    draw_line(ox + 47 * k, oy - 19 * k, ox + 74 * k, oy - 46 * k, stroke, color); // Arrowhead.
+    draw_line(ox + 74 * k, oy - 46 * k, ox + 101 * k, oy - 19 * k, stroke, color);
 }
 
 draw_top_bar :: (r: Rect) {
