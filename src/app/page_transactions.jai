@@ -1,7 +1,7 @@
 // Transactions: find, compare and fix individual transactions.
 //
-// Toolbar filters (search, period, account, category, tag, status, direction)
-// narrow the list; the strip under it sums what is shown. Sorted by date the
+// Toolbar filters (search, period, account, category, tag, status, direction,
+// own transfers) narrow the list; the strip under it sums what is shown. Sorted by date the
 // list is grouped by day, each day's header carrying its money in and out.
 // Selecting a row opens the inspector on the right, where the category and
 // tags can be changed. Ctrl+click (or Shift+click for a run of rows) chooses
@@ -15,6 +15,7 @@ Transactions_State :: struct {
     category:  int;
     status:    int;   // 0 all, 1 held, 2 settled
     direction: int;   // 0 all, 1 in, 2 out
+    hide_transfers: bool;   // Leave out money moved between my own accounts.
     tag:       s32 = -1;   // Tag index; -1 all, -2 untagged.
     custom:    Period;     // A period picked elsewhere (a month, a chart bar).
     has_custom: bool;
@@ -79,6 +80,7 @@ show_transactions :: (category := -1, period := 0, status := 0, tag: s32 = -1, s
     }
     st.status = status;
     st.direction = 0;
+    st.hide_transfers = false;
     st.tag = tag;
     acct_items, acct_map := account_filter_items();
     st.account = ifx account >= 0 then index_of_value(acct_map, cast(s32) account) else 0;
@@ -108,7 +110,7 @@ draw_transactions_page :: (r_in: Rect) {
     count_w := px(150);
     controls := bar;
     controls.w -= count_w;
-    search_w := clamp(controls.w - px(1040), px(170), px(300));
+    search_w := clamp(controls.w - px(1180), px(170), px(300));
     search_r := cut_left(*controls, search_w);
     // In a narrow window the dropdowns give up width before the status filter does.
     status_options := string.["All", "Held", "Settled"];
@@ -148,11 +150,19 @@ draw_transactions_page :: (r_in: Rect) {
         if ui_segmented("direction##txn", cut_left(*controls, dw), direction_options, *st.direction) changed = true;
         cut_left(*controls, px(6));
     }
-    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1;
+    transfers_label := "Hide transfers##txn";
+    transfers_w := px(22 + 8) + measure_text(fonts.regular, px(theme.font_size_body), display_text(transfers_label));
+    if controls.w >= transfers_w || st.hide_transfers {
+        cut_left(*controls, px(4));
+        if ui_checkbox(transfers_label, cut_left(*controls, transfers_w), *st.hide_transfers) changed = true;
+        cut_left(*controls, px(6));
+    }
+    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
     if filtered && controls.w >= px(80) {
         if ui_button("Clear##txn-filters", cut_left(*controls, px(70)), .GHOST, .CLOSE) {
             st.search.count = 0;
             st.period = 0; st.account = 0; st.category = 0; st.status = 0; st.direction = 0; st.tag = -1;
+            st.hide_transfers = false;
             changed = true;
         }
     }
@@ -397,7 +407,7 @@ sort_column_for_compare: int;
 rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
     search := to_lower_temp(trim(buffer_string(*st.search)));
     key := hash_key(store.version, cast(u64) st.period, cast(u64) st.account, cast(u64) st.category, cast(u64) st.status, cast(u64) st.direction,
-                    cast(u64) (st.table.sort_column + 3), cast(u64) st.table.sort_desc, cast(u64) app.today, cast(u64) (st.tag + 5), cast(u64) settings.exclude_transfers,
+                    cast(u64) (st.table.sort_column + 3), cast(u64) st.table.sort_desc, cast(u64) app.today, cast(u64) (st.tag + 5), cast(u64) settings.exclude_transfers, cast(u64) st.hide_transfers,
                     cast(u64) hash_key_string(search));
     if key == st.rows_key return;
     st.rows_key = key;
@@ -420,6 +430,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         if st.status == 2 && txn.status != .SETTLED continue;
         if st.direction == 1 && txn.amount <= 0 continue;
         if st.direction == 2 && txn.amount >= 0 continue;
+        if st.hide_transfers && is_transfer(txn) continue;
         if !tag_matches(txn, st.tag) continue;
         if !txn_matches(txn, search) continue;
         array_add(*indices, cast(s32) i);

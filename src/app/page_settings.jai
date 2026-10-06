@@ -27,13 +27,24 @@ draw_settings_page :: (r_in: Rect) {
 
     display_r := cut_top(*right, px(208));
     cut_top(*right, gap);
-    about_r := cut_bottom(*right, about_panel_height(right.w));
-    cut_bottom(*right, gap);
+    // On a short window About sets its logo beside the name, so Diagnostics keeps room for its
+    // readouts; shorter still, Diagnostics gives way and About takes the column.
+    stacked_h := about_panel_height(right.w, false);
+    room := right.h - gap - px(DIAGNOSTICS_MIN_HEIGHT);
+    show_diagnostics := room >= about_panel_height(right.w, true);
+    about_compact := ifx show_diagnostics then room < stacked_h else right.h < stacked_h;
+    about_r := right;
+    if show_diagnostics {
+        about_r = cut_bottom(*right, about_panel_height(right.w, about_compact));
+        cut_bottom(*right, gap);
+    }
     draw_display_panel(appear_begin(display_r, 3), st);
     appear_end();
-    draw_diagnostics_panel(appear_begin(right, 4));
-    appear_end();
-    draw_about_panel(appear_begin(about_r, 5));
+    if show_diagnostics {
+        draw_diagnostics_panel(appear_begin(right, 4));
+        appear_end();
+    }
+    draw_about_panel(appear_begin(about_r, 5), about_compact);
     appear_end();
 }
 
@@ -259,27 +270,74 @@ disclaimer_lines :: (panel_w: float) -> [] string {
     return wrap_lines(fonts.regular, px(theme.font_size_label), DISCLAIMER, panel_w - px(32));
 }
 
-// Three rows, a divider and the disclaimer, wrapped to the panel's width.
-about_panel_height :: (panel_w: float) -> float {
-    return px(theme.panel_header_height) + px(20) + px(66) + px(17) + disclaimer_lines(panel_w).count * px(DISCLAIMER_LINE);
+DIAGNOSTICS_MIN_HEIGHT :: 214.0;   // Header and the six readout rows.
+ABOUT_MARK :: 44.0;
+ABOUT_TITLE :: 20.0;
+ABOUT_HERO_STACKED :: 16 + ABOUT_MARK + 10 + 26 + 20;   // Logo above the name and byline.
+ABOUT_HERO_COMPACT :: 16 + ABOUT_MARK;                  // Logo beside them.
+
+// The hero, the links, a divider, the disclaimer wrapped to the panel's width, and the copyright.
+about_panel_height :: (panel_w: float, compact: bool) -> float {
+    hero := ifx compact then ABOUT_HERO_COMPACT else ABOUT_HERO_STACKED;
+    return px(theme.panel_header_height) + px(hero) + px(12 + 22 + 14 + 13) + disclaimer_lines(panel_w).count * px(DISCLAIMER_LINE) + px(6 + 18 + 12);
 }
 
-draw_about_panel :: (r: Rect) {
+draw_about_panel :: (r: Rect, compact: bool) {
     content, _ := panel_begin(r, "About");
-    inner := rect_inset_xy(content, px(16), px(10));
-    draw_field(cut_top(*inner, px(22)), "Made by", "Ruben Bala");
-    link_row :: (r: Rect, label: string, text: string, url: string) {
-        label_w := px(112);
-        draw_text_in_rect(fonts.regular, px(theme.font_size_label), rect(r.x, r.y, label_w, r.h), label, theme.text_muted);
-        if ui_link(text, rect(r.x + label_w, r.y, r.w - label_w, r.h)) platform_open_url(url);
-    }
-    link_row(cut_top(*inner, px(22)), "Website", "ruben.net.au##about", "https://ruben.net.au");
-    link_row(cut_top(*inner, px(22)), "Source", "github.com/rubenbala/uppies##about", "https://github.com/rubenbala/uppies");
+    inner := rect_inset_xy(content, px(16), 0);
+    cut_top(*inner, px(16) + max(r.h - about_panel_height(r.w, compact), 0) * 0.5);   // Centered when given more room than it needs.
+    cx := inner.x + inner.w * 0.5;
 
-    cut_top(*inner, px(8));
+    title_size := px(ABOUT_TITLE);
+    byline_size := px(theme.font_size_body);
+    BYLINE :: "Made by Ruben Bala";
+    if compact {
+        hero := cut_top(*inner, px(ABOUT_MARK));
+        text_w := max(measure_text(fonts.semibold, title_size, "Uppies"), measure_text(fonts.regular, byline_size, BYLINE));
+        x := cx - (px(ABOUT_MARK) + px(14) + text_w) * 0.5;
+        draw_brand_mark(snap(rect(x, hero.y, px(ABOUT_MARK), px(ABOUT_MARK))));
+        x += px(ABOUT_MARK) + px(14);
+        draw_text_in_rect(fonts.semibold, title_size, rect(x, hero.y - px(1), text_w, px(26)), "Uppies", theme.text);
+        draw_text_in_rect(fonts.regular, byline_size, rect(x, hero.y + px(24), text_w, px(20)), BYLINE, theme.text_secondary);
+    } else {
+        mark := cut_top(*inner, px(ABOUT_MARK));
+        draw_brand_mark(snap(rect(cx - px(ABOUT_MARK) * 0.5, mark.y, px(ABOUT_MARK), px(ABOUT_MARK))));
+        cut_top(*inner, px(10));
+        draw_text_in_rect(fonts.semibold, title_size, cut_top(*inner, px(26)), "Uppies", theme.text, .CENTER);
+        draw_text_in_rect(fonts.regular, byline_size, cut_top(*inner, px(20)), BYLINE, theme.text_secondary, .CENTER);
+    }
+
+    // Links, centered as a group: an icon, then the link, with a dot between.
+    cut_top(*inner, px(12));
+    links := cut_top(*inner, px(22));
+    LINKS :: struct { icon: Icon; label: string; url: string; }.[
+        .{.GLOBE, "ruben.net.au##about", "https://ruben.net.au"},
+        .{.LINK,  "github.com/rubenbala/uppies##about", "https://github.com/rubenbala/uppies"},
+    ];
+    link_size := px(theme.font_size_label);
+    icon_w := px(12) + px(6);
+    sep_w := px(28);
+    total := sep_w * (LINKS.count - 1);
+    for LINKS total += icon_w + measure_text(fonts.regular, link_size, display_text(it.label));
+    x := cx - total * 0.5;
+    for LINKS {
+        if it_index > 0 {
+            draw_circle(x + sep_w * 0.5, links.y + links.h * 0.5, px(1.5), theme.text_faint);
+            x += sep_w;
+        }
+        draw_icon(it.icon, x + px(6), links.y + links.h * 0.5, px(12), theme.text_muted);
+        x += icon_w;
+        w := measure_text(fonts.regular, link_size, display_text(it.label));
+        if ui_link(it.label, rect(x, links.y, w, links.h)) platform_open_url(it.url);
+        x += w;
+    }
+
+    cut_top(*inner, px(14));
     ui_divider(inner.x, inner.y, inner.w, theme.divider);
-    cut_top(*inner, px(9));
-    for disclaimer_lines(r.w) draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted);
+    cut_top(*inner, px(13));
+    for disclaimer_lines(r.w) draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted, .CENTER);
+    cut_top(*inner, px(6));
+    draw_text_in_rect(fonts.regular, px(theme.font_size_small), cut_top(*inner, px(18)), "© 2026 Ruben Bala", theme.text_faint, .CENTER);
 }
 
 draw_keys_panel :: (r: Rect) {
