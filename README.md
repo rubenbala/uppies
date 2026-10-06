@@ -1,9 +1,16 @@
 # Uppies
 
-A desktop console for an [Up](https://up.com.au) bank account, built on the
+**An unofficial desktop client for [Up](https://up.com.au).**
+
+A desktop console for an Up bank account, built on the
 [Up API](https://developer.up.com.au). Written in [Jai](https://jai.community) on Direct3D 11:
 one draw call per frame, about 0.5–0.8 ms of CPU per frame in release, and no CPU at all while
 nothing changes.
+
+> **Disclaimer.** Uppies is an independent, unofficial app. It is not affiliated with, endorsed
+> by or sponsored by Up or Bendigo and Adelaide Bank Limited. "Up" is a trademark of its owner
+> and is used here only to say which bank Uppies works with. Uppies is provided as is, without
+> warranty of any kind, and nothing in it is financial advice.
 
 Pages sit in a tab bar along the top (there is no sidebar):
 
@@ -45,9 +52,19 @@ background, to catch changes to older transactions (a category set in the Up app
 data**, which removes the file and downloads everything again, and a switch to stop keeping a
 copy at all.
 
+## Security
+
+Uppies never sends your token anywhere but `api.up.com.au`, and the Up API can't be used to
+move money. Anyone who has your token or can run code as your Windows user can still read your
+data, so revoke the token at <https://api.up.com.au/getting_started> if you suspect it has
+leaked. Please report vulnerabilities privately (see [SECURITY.md](SECURITY.md)), and never post
+a real token, `token.bin`, `store.uppies` or screenshots of real data in an issue; use `-demo`
+mode instead.
+
 ## Build and run
 
-Requires the Jai compiler on the PATH (`jai`) and Windows 10 or newer.
+Requires the Jai compiler on the PATH (`jai`) and Windows 10 or newer. Jai is currently in a
+closed beta, so you need beta access to build from source.
 
 ```bash
 jai build.jai                 # debug build -> bin/uppies.exe
@@ -90,3 +107,8 @@ other fonts, put `ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf`, `ui-mono.t
 `ui-numeric.ttf` in `data/fonts/`.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it is put together.
+
+## License
+
+[MIT](LICENSE) © 2026 Ruben Bala. Third-party components are listed in
+[THIRD_PARTY.md](THIRD_PARTY.md).
