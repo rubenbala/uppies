@@ -63,7 +63,7 @@ theme: Theme;
 // the category, never its rank. Validated (dark surface #14171B): every
 // adjacent pair separates under deuteranopia (ΔE ≥ 13) and normal vision.
 PARENT_CATEGORY_IDS    :: string.["good-life", "personal", "home", "transport"];
-PARENT_CATEGORY_COLORS :: Color.[#run rgb(0x9085E9), #run rgb(0xD55181), #run rgb(0xC98500), #run rgb(0x3987E5)];
+PARENT_CATEGORY_COLORS :: Color.[#run rgb(0xE0B021), #run rgb(0xE8702A), #run rgb(0xB57BEB), #run rgb(0x3987E5)];
 UNCATEGORISED_COLOR    :: #run rgb(0x59606A);
 
 Fonts :: struct {
