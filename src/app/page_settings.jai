@@ -27,7 +27,7 @@ draw_settings_page :: (r_in: Rect) {
 
     display_r := cut_top(*right, px(208));
     cut_top(*right, gap);
-    about_r := cut_bottom(*right, px(120));
+    about_r := cut_bottom(*right, about_panel_height(right.w));
     cut_bottom(*right, gap);
     draw_display_panel(appear_begin(display_r, 3), st);
     appear_end();
@@ -252,6 +252,18 @@ draw_diagnostics_panel :: (r: Rect) {
     }
 }
 
+DISCLAIMER :: "Uppies is an independent, unofficial app. It is not affiliated with, endorsed by or sponsored by Up or Bendigo and Adelaide Bank Limited. \"Up\" is a trademark of its owner and is used here only to say which bank Uppies works with. Uppies is provided as is, without warranty of any kind, and nothing in it is financial advice.";
+DISCLAIMER_LINE :: 17.0;
+
+disclaimer_lines :: (panel_w: float) -> [] string {
+    return wrap_lines(fonts.regular, px(theme.font_size_label), DISCLAIMER, panel_w - px(32));
+}
+
+// Three rows, a divider and the disclaimer, wrapped to the panel's width.
+about_panel_height :: (panel_w: float) -> float {
+    return px(theme.panel_header_height) + px(20) + px(66) + px(17) + disclaimer_lines(panel_w).count * px(DISCLAIMER_LINE);
+}
+
 draw_about_panel :: (r: Rect) {
     content, _ := panel_begin(r, "About");
     inner := rect_inset_xy(content, px(16), px(10));
@@ -263,6 +275,11 @@ draw_about_panel :: (r: Rect) {
     }
     link_row(cut_top(*inner, px(22)), "Website", "ruben.net.au##about", "https://ruben.net.au");
     link_row(cut_top(*inner, px(22)), "Source", "github.com/rubenbala/uppies##about", "https://github.com/rubenbala/uppies");
+
+    cut_top(*inner, px(8));
+    ui_divider(inner.x, inner.y, inner.w, theme.divider);
+    cut_top(*inner, px(9));
+    for disclaimer_lines(r.w) draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted);
 }
 
 draw_keys_panel :: (r: Rect) {
