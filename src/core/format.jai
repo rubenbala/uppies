@@ -10,6 +10,13 @@ Sign_Display :: enum u8 {
 }
 
 // "1,284,001"
+// "640 bytes", "84 KB", "1.2 MB".
+format_bytes :: (bytes: s64) -> string {
+    if bytes < 1024 return tprint("% bytes", bytes);
+    if bytes < 1024 * 1024 return tprint("% KB", (bytes + 512) / 1024);
+    return tprint("% MB", formatFloat(bytes / (1024.0 * 1024.0), trailing_width = 1, zero_removal = .NO));
+}
+
 format_grouped :: (value: s64) -> string {
     negative := value < 0;
     v := ifx negative then -value else value;

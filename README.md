@@ -28,6 +28,23 @@ of the API instead.
 Uppies can change categories and tags and manage webhooks; it cannot move money (the API
 doesn't allow it).
 
+## Your data on this PC
+
+Uppies keeps what it has downloaded in `%APPDATA%\Uppies\store.uppies`, so it opens instantly
+and afterwards only asks Up for what changed. The file is encrypted with AES-256-GCM under a
+fresh random key on every save; that key is protected by Windows DPAPI together with your access
+token, so only your Windows account, with that same token, can read it. A file that was altered,
+damaged or written by another token is never used: Uppies deletes it and downloads again.
+
+Each time it opens, Uppies shows the saved data, then re-reads balances, categories and the last
+45 days of transactions (further back if something is still pending or it has been a while).
+Up has no way to ask "what changed?", so once a week it also re-reads the whole history in the
+background, to catch changes to older transactions (a category set in the Up app, say).
+
+**Settings > Data** shows the file's size and the last full check, and has **Delete local
+data**, which removes the file and downloads everything again, and a switch to stop keeping a
+copy at all.
+
 ## Build and run
 
 Requires the Jai compiler on the PATH (`jai`) and Windows 10 or newer.

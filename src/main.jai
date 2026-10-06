@@ -44,6 +44,7 @@ FT :: #import "freetype";
 #load "net/http_windows.jai";
 #load "up/model.jai";
 #load "up/store.jai";
+#load "up/store_file.jai";
 #load "up/client.jai";
 #load "up/demo.jai";
 #load "selftest.jai";
@@ -56,6 +57,7 @@ FT :: #import "freetype";
 #load "app/app.jai";
 #load "app/settings.jai";
 #load "app/sync.jai";
+#load "app/local_data.jai";
 #load "app/analytics.jai";
 #load "app/common.jai";
 #load "app/widgets.jai";
@@ -92,6 +94,8 @@ main :: () {
     set_working_directory(exe_dir);
 
     // -selftest | -demo | -size WxH | -script "steps" (see app/script.jai)
+    // -data-dir PATH: keep settings, token and data there, even when
+    //                 scripted (tests); -cache-demo: store sample data too.
     args := get_command_line_arguments();
     width, height := 1360, 860;
     start_demo := false;
@@ -99,6 +103,7 @@ main :: () {
     start_page := "";
     continuous := false;
     quit_after: float64 = -1;   // Seconds; reports how many frames were drawn.
+    data_dir := "";
     for args {
         if it == "-selftest" exit(cast(s32) selftest());
         if it == "-demo" start_demo = true;
@@ -110,10 +115,17 @@ main :: () {
         if it == "-hidden" hidden = true;
         if it == "-continuous" continuous = true;
         if it == "-page" && it_index + 1 < args.count start_page = args[it_index + 1];
+        if it == "-data-dir" && it_index + 1 < args.count data_dir = args[it_index + 1];
+        if it == "-cache-demo" local_data.cache_demo = true;
         if it == "-quit-after" && it_index + 1 < args.count {
             quit_after = string_to_float(args[it_index + 1]);
             persist_enabled = false;
         }
+    }
+
+    if data_dir.count {
+        platform_set_app_data_dir(data_dir);
+        persist_enabled = true;
     }
 
     if !platform_init("Uppies", width, height) exit(1);
@@ -187,6 +199,7 @@ main :: () {
             platform_sleep_until(clock.last_time + 1.0 / app.max_fps);
         }
     }
+    local_data_shutdown();
 }
 
 // Something to show: input arrived, an animation is in flight, or the app

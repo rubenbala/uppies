@@ -159,25 +159,102 @@ platform_app_data_dir :: () -> string {
     return app_data_dir;
 }
 
+// Points every per-user file at another folder (testing: -data-dir).
+platform_set_app_data_dir :: (path: string) {
+    free(app_data_dir);
+    app_data_dir = copy_string(path);
+    for 0..app_data_dir.count - 1 if app_data_dir[it] == #char "\\" app_data_dir[it] = #char "/";
+    make_directory_if_it_does_not_exist(app_data_dir, recursive = true);
+}
+
 // Secrets at rest are encrypted with DPAPI: only this Windows user on this
-// machine can decrypt them.
-platform_protect :: (plain: string) -> string, bool {
+// machine can decrypt them. Optional `entropy` must be given again to
+// decrypt, binding the secret to something else the app knows.
+platform_protect :: (plain: string, entropy := "") -> string, bool {
     input_blob := DATA_BLOB.{cast(u32) plain.count, plain.data};
+    entropy_blob := DATA_BLOB.{cast(u32) entropy.count, entropy.data};
     output_blob: DATA_BLOB;
-    if !CryptProtectData(*input_blob, utf8_to_wide("Uppies",, temp), null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
+    if !CryptProtectData(*input_blob, utf8_to_wide("Uppies",, temp), ifx entropy.count then *entropy_blob else null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
     result := copy_string(string.{output_blob.cbData, output_blob.pbData});
     LocalFree(output_blob.pbData);
     return result, true;
 }
 
-platform_unprotect :: (cipher: string) -> string, bool {
+platform_unprotect :: (cipher: string, entropy := "") -> string, bool {
     input_blob := DATA_BLOB.{cast(u32) cipher.count, cipher.data};
+    entropy_blob := DATA_BLOB.{cast(u32) entropy.count, entropy.data};
     output_blob: DATA_BLOB;
-    if !CryptUnprotectData(*input_blob, null, null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
+    if !CryptUnprotectData(*input_blob, null, ifx entropy.count then *entropy_blob else null, null, null, CRYPTPROTECT_UI_FORBIDDEN, *output_blob) return "", false;
     result := copy_string(string.{output_blob.cbData, output_blob.pbData});
     memset(output_blob.pbData, 0, output_blob.cbData);
     LocalFree(output_blob.pbData);
     return result, true;
+}
+
+// Cryptographically secure random bytes from the OS.
+platform_random_bytes :: (out: [] u8) -> bool {
+    return BCryptGenRandom(null, out.data, cast(u32) out.count, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+}
+
+AES_KEY_SIZE   :: 32;   // AES-256.
+AES_NONCE_SIZE :: 12;   // The GCM standard nonce.
+AES_TAG_SIZE   :: 16;
+
+// AES-256-GCM (Windows CNG). `aad` is authenticated but not encrypted.
+// Returns the ciphertext (same length as plain, heap) and the tag.
+platform_aes_gcm_encrypt :: (key: [] u8, nonce: [] u8, aad: [] u8, plain: [] u8) -> cipher: [] u8, tag: [AES_TAG_SIZE] u8, ok: bool {
+    tag: [AES_TAG_SIZE] u8;
+    k, key_ok := aes_gcm_key(key);
+    if !key_ok || nonce.count != AES_NONCE_SIZE return .[], tag, false;
+    defer BCryptDestroyKey(k);
+    cipher := NewArray(plain.count, u8, initialized = false);
+    info := aes_gcm_info(nonce, aad, *tag);
+    written: u32;
+    status := BCryptEncrypt(k, plain.data, cast(u32) plain.count, *info, null, 0, cipher.data, cast(u32) cipher.count, *written, 0);
+    if status != 0 { array_free(cipher); return .[], tag, false; }
+    return cipher, tag, true;
+}
+
+// Fails if the ciphertext, tag or aad were altered, or the key or nonce are
+// wrong: nothing unauthenticated is ever returned.
+platform_aes_gcm_decrypt :: (key: [] u8, nonce: [] u8, aad: [] u8, cipher: [] u8, tag: [AES_TAG_SIZE] u8) -> plain: [] u8, ok: bool {
+    k, key_ok := aes_gcm_key(key);
+    if !key_ok || nonce.count != AES_NONCE_SIZE return .[], false;
+    defer BCryptDestroyKey(k);
+    plain := NewArray(cipher.count, u8, initialized = false);
+    tag_copy := tag;
+    info := aes_gcm_info(nonce, aad, *tag_copy);
+    written: u32;
+    status := BCryptDecrypt(k, cipher.data, cast(u32) cipher.count, *info, null, 0, plain.data, cast(u32) plain.count, *written, 0);
+    if status != 0 {
+        memset(plain.data, 0, plain.count);
+        array_free(plain);
+        return .[], false;
+    }
+    return plain, true;
+}
+
+// Replaces `path` with `data` in one step: written beside it, flushed to
+// disk, then renamed over it. A crash leaves the old file or the new one,
+// never a mixture.
+platform_write_file_atomic :: (path: string, data: [] u8) -> bool {
+    tmp := tprint("%.tmp", path);
+    wide_tmp := utf8_to_wide(tmp,, temp);
+    handle := CreateFileW(wide_tmp, GENERIC_WRITE, 0, null, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, null);
+    if handle == INVALID_HANDLE_VALUE return false;
+    at := 0;
+    ok := true;
+    while at < data.count {
+        chunk := cast(u32) min(data.count - at, 1 << 30);
+        written: u32;
+        if !WriteFile(handle, data.data + at, chunk, *written, null) || written == 0 { ok = false; break; }
+        at += written;
+    }
+    if ok ok = FlushFileBuffers(handle) != 0;
+    CloseHandle(handle);
+    if ok ok = MoveFileExW(wide_tmp, utf8_to_wide(path,, temp), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if !ok DeleteFileW(wide_tmp);
+    return ok;
 }
 
 platform_set_cursor :: (cursor: Cursor) {
@@ -400,6 +477,37 @@ detect_refresh_rate :: (hwnd: HWND) -> int {
     return hz;
 }
 
+aes_gcm_key :: (key: [] u8) -> BCRYPT_HANDLE, bool {
+    if key.count != AES_KEY_SIZE return null, false;
+    if !aes_algorithm {
+        if BCryptOpenAlgorithmProvider(*aes_algorithm, utf8_to_wide("AES",, temp), null, 0) != 0 { aes_algorithm = null; return null, false; }
+        mode := utf8_to_wide("ChainingModeGCM",, temp);
+        if BCryptSetProperty(aes_algorithm, utf8_to_wide("ChainingMode",, temp), cast(*u8) mode, cast(u32) ("ChainingModeGCM".count + 1) * 2, 0) != 0 {
+            BCryptCloseAlgorithmProvider(aes_algorithm, 0);
+            aes_algorithm = null;
+            return null, false;
+        }
+    }
+    k: BCRYPT_HANDLE;
+    if BCryptGenerateSymmetricKey(aes_algorithm, *k, null, 0, key.data, cast(u32) key.count, 0) != 0 return null, false;
+    return k, true;
+}
+
+aes_gcm_info :: (nonce: [] u8, aad: [] u8, tag: *[AES_TAG_SIZE] u8) -> BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+    info: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO;
+    info.cbSize        = size_of(BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO);
+    info.dwInfoVersion = 1;
+    info.pbNonce       = nonce.data;
+    info.cbNonce       = cast(u32) nonce.count;
+    info.pbAuthData    = aad.data;
+    info.cbAuthData    = cast(u32) aad.count;
+    info.pbTag         = tag.data;   // Written on encrypt, checked on decrypt.
+    info.cbTag         = AES_TAG_SIZE;
+    return info;
+}
+
+aes_algorithm: BCRYPT_HANDLE;
+
 // Win32 declarations the Windows module does not have.
 
 win32_user32   :: #library,system "user32";
@@ -411,6 +519,41 @@ win32_kernel32 :: #library,system "kernel32";
 WM_APP_WAKE   :: 0x8000 + 1;   // WM_APP + 1
 SW_SHOWNORMAL :: 1;
 CRYPTPROTECT_UI_FORBIDDEN :: 0x1;
+
+win32_bcrypt :: #library,system "bcrypt";
+
+BCRYPT_HANDLE :: *void;
+BCRYPT_USE_SYSTEM_PREFERRED_RNG :: 0x2;
+
+BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO :: struct {
+    cbSize:        u32;
+    dwInfoVersion: u32;
+    pbNonce:       *u8;
+    cbNonce:       u32;
+    pbAuthData:    *u8;
+    cbAuthData:    u32;
+    pbTag:         *u8;
+    cbTag:         u32;
+    pbMacContext:  *u8;
+    cbMacContext:  u32;
+    cbAAD:         u32;
+    cbData:        u64;
+    dwFlags:       u32;
+}
+#assert size_of(BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO) == 88;   // As in bcrypt.h on x64.
+
+BCryptOpenAlgorithmProvider :: (algorithm: *BCRYPT_HANDLE, id: *u16, implementation: *u16, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptCloseAlgorithmProvider :: (algorithm: BCRYPT_HANDLE, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptSetProperty :: (object: BCRYPT_HANDLE, property: *u16, input: *u8, input_size: u32, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptGenerateSymmetricKey :: (algorithm: BCRYPT_HANDLE, key: *BCRYPT_HANDLE, key_object: *u8, key_object_size: u32, secret: *u8, secret_size: u32, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptDestroyKey :: (key: BCRYPT_HANDLE) -> s32 #foreign win32_bcrypt;
+BCryptEncrypt :: (key: BCRYPT_HANDLE, input: *u8, input_size: u32, padding_info: *void, iv: *u8, iv_size: u32, output: *u8, output_size: u32, result: *u32, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptDecrypt :: (key: BCRYPT_HANDLE, input: *u8, input_size: u32, padding_info: *void, iv: *u8, iv_size: u32, output: *u8, output_size: u32, result: *u32, flags: u32) -> s32 #foreign win32_bcrypt;
+BCryptGenRandom :: (algorithm: BCRYPT_HANDLE, buffer: *u8, size: u32, flags: u32) -> s32 #foreign win32_bcrypt;
+
+MOVEFILE_REPLACE_EXISTING :: 0x1;
+MOVEFILE_WRITE_THROUGH    :: 0x8;
+MoveFileExW :: (existing: *u16, new_name: *u16, flags: u32) -> s32 #foreign win32_kernel32;
 
 DATA_BLOB :: struct {
     cbData: u32;

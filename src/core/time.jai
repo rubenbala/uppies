@@ -193,6 +193,15 @@ format_relative :: (seconds_ago: s64) -> string {
     return tprint("%d ago", s / 86400);
 }
 
+// A coarse length of time: "12 min", "5 hours", "6 days".
+format_span :: (seconds: s64) -> string {
+    s := max(seconds, 0);
+    if s < 3600 return tprint("% min", max((s + 30) / 60, 1));
+    if s < 86400 - 1800 { h := (s + 1800) / 3600; return tprint("% hour%", h, ifx h == 1 then "" else "s"); }
+    d := max((s + 43200) / 86400, 1);
+    return tprint("% day%", d, ifx d == 1 then "" else "s");
+}
+
 // "45s", "3m 05s", "1h 02m".
 format_duration :: (seconds: s64) -> string {
     s := max(seconds, 0);

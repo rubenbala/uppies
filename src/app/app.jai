@@ -27,7 +27,7 @@ Toast :: struct {
     leaving: bool;
 }
 
-Confirm_Kind :: enum u8 { NONE; DELETE_WEBHOOK; DISCONNECT; RELOAD; }
+Confirm_Kind :: enum u8 { NONE; DELETE_WEBHOOK; DISCONNECT; DELETE_LOCAL_DATA; }
 
 Confirm :: struct {
     open:    bool;
@@ -97,6 +97,9 @@ app_init :: (start_demo := false) {
         sync_start("", true);
         app.connect.auto_connecting = true;
     }
+    // Opened on saved data: the console is there from the first frame, no
+    // fade in from the connect screen.
+    if sync.from_saved app.console_t = 1;
 }
 
 app_frame :: () {
@@ -104,6 +107,7 @@ app_frame :: () {
     app.today = floor_div(app.now.utc_seconds + app.now.offset_minutes * 60, SECONDS_PER_DAY);
     record_timings();
     sync_update();
+    local_data_update();
     analytics_update(app.today);
     // Relative times ("3m ago") stay current: a frame a minute is enough.
     ui_wake_at(ui.time + 60 - fmod_cycling(cast(float) app.now.utc_seconds, 60.0));
@@ -400,8 +404,13 @@ draw_sync_status :: (r: Rect) -> float {
     } else if sync.phase == .LOADING {
         text = tprint("Loading history · % transactions", format_grouped(store.transactions.count));
         dot = theme.held;
+    } else if sync.from_saved {
+        // Opened from local data; Up hasn't been heard from yet.
+        dot = theme.held;
+        if sync.error.count text = tprint("Offline · saved data from %", format_relative(app.now.utc_seconds - sync.last_sync_utc));
+        else text = "Saved data · checking Up…";
     } else if sync.refreshing {
-        text = "Refreshing…";
+        text = ifx sync.refresh_kind == .FULL then "Checking all transactions…" else "Refreshing…";
         dot = theme.held;
     } else if sync.error.count {
         text = tprint("Stale · synced %", format_relative(app.now.utc_seconds - sync.last_sync_utc));
@@ -557,7 +566,7 @@ draw_confirm :: () {
     cut_top(*inner, px(8));
     for lines draw_text_in_rect(fonts.regular, px(theme.font_size_body), cut_top(*inner, px(19)), it, theme.text_secondary);
     buttons := cut_bottom(*inner, px(theme.control_height));
-    destructive := c.kind == .DELETE_WEBHOOK || c.kind == .DISCONNECT;
+    destructive := c.kind == .DELETE_WEBHOOK || c.kind == .DISCONNECT || c.kind == .DELETE_LOCAL_DATA;
     action_r := cut_right(*buttons, ui_button_width(c.action));
     cut_right(*buttons, px(8));
     cancel_r := cut_right(*buttons, ui_button_width("Cancel"));
@@ -572,7 +581,9 @@ draw_confirm :: () {
                     settings_save();
                     sync_disconnect();
                     app.connect.token.count = 0;
-                case .RELOAD; sync_reload_all();
+                case .DELETE_LOCAL_DATA;
+                    sync_reload_all();   // Deletes the file, then downloads everything.
+                    app_toast(.INFO, "Local data deleted. Downloading everything from Up again.");
             }
         }
         if ui_button("Cancel##confirm", cancel_r, .SECONDARY) || key_pressed(.ESCAPE) {
@@ -581,7 +592,7 @@ draw_confirm :: () {
         }
         if key_pressed(.ENTER) && ui.focus == 0 {
             // Enter confirms only when nothing else is focused... and never for destructive actions.
-            if !destructive { c.open = false; if c.kind == .RELOAD sync_reload_all(); }
+            if !destructive c.open = false;
         }
     }
     ui_modal_end();

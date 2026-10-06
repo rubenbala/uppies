@@ -18,7 +18,7 @@ src/core/json.jai            JSON parser (tree) and string escaping
 src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
 src/core/format.jai          Money (integer cents) and number formatting
 src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
-src/up/                      The Up API: model + parsing, store, threaded client, sample-data simulation
+src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
 src/app/                     The console: sync engine, analytics, pages, charts, inspector, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
@@ -131,6 +131,24 @@ it in its own file, chosen with `#if OS`. Keys use Windows virtual-key values as
 `store.version`; `app/analytics.jai` and each page's cached rows recompute only when the version
 (or a filter) changes. Sample-data mode answers the same requests from `up/demo.jai`, so paging,
 parsing, errors and writes all run the real code.
+
+**Local data.** `up/store_file.jai` saves the store to `%APPDATA%/Uppies/store.uppies`, a format
+of our own: a small authenticated header (magic, version, DPAPI-wrapped key, nonce), then the
+payload as varint-encoded records (accounts, categories, tags, transactions referring to them by
+index, plus sync state), encrypted with AES-256-GCM (Windows CNG). The key is new on every save
+and wrapped with DPAPI using the access token as entropy. Serializing takes a few milliseconds on
+the UI thread; encryption, DPAPI and the flushed, atomic write (temp file + rename) run on a
+writer thread. `app/local_data.jai` decides when: after a change has been quiet for 1.5 s, at
+least every 15 s during a long download, and at exit.
+
+`sync_start` opens the file before the first frame, so the console appears with the saved data.
+Once the ping succeeds, `sync.jai` catches up (categories, tags, balances, then a transaction
+window back 45 days, to the oldest held transaction, and past the last sync), resumes an
+interrupted history download with `filter[until]`, and every 7 days re-reads the whole history
+(`Refresh_Kind.FULL`), since the API has no change feed. Each window replaces what the store had
+for it in one step, keeping category and tag edits made while it was in flight. The self-test
+checks AES-GCM against a NIST vector, a field-by-field round trip, and that a tampered file or
+another token is rejected. Test runs can use `-data-dir PATH` and `-cache-demo`.
 
 Timers (caret blink, tooltip delay, toasts, auto-refresh, relative times) don't keep the loop
 running: they call `ui_wake_at`, and the loop sleeps until then. `ui.time` is wall-clock;

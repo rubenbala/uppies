@@ -126,6 +126,62 @@ selftest :: () -> int {
     check(!tampered, "tampered ciphertext is rejected");
     check(mask_token(secret) == tprint("up:yeah:%2%1", "6789", "••••••••"), tprint("token masking: %", mask_token(secret)));
 
+    // The local store file. First AES-256-GCM itself, against NIST's test
+    // case 14 (zero key, zero nonce, one zero block).
+    {
+        zeros: [32] u8;
+        nonce: [AES_NONCE_SIZE] u8;
+        block: [16] u8;
+        c, tag, gcm_ok := platform_aes_gcm_encrypt(zeros, nonce, .[], block);
+        hex :: (b: [] u8) -> string {
+            builder: String_Builder;
+            builder.allocator = temp;
+            for b print_to_builder(*builder, "%", formatInt(it, base = 16, minimum_digits = 2));
+            return to_lower_temp(builder_to_string(*builder,, temp));
+        }
+        check(gcm_ok && hex(c) == "cea7403d4d606b6e074ec5d3baf39d18", tprint("AES-256-GCM ciphertext (NIST): %", hex(c)));
+        check(hex(tag) == "d0d1c8a799996bf0265b98b5d48ab919", tprint("AES-256-GCM tag (NIST): %", hex(tag)));
+        p, dec_ok := platform_aes_gcm_decrypt(zeros, nonce, .[], c, tag);
+        check(dec_ok && p.count == 16 && p[0] == 0 && p[15] == 0, "AES-256-GCM decrypts");
+        tag[0] ^= 1;
+        _, forged := platform_aes_gcm_decrypt(zeros, nonce, .[], c, tag);
+        check(!forged, "AES-256-GCM rejects a forged tag");
+    }
+    {
+        meta := Store_File_Meta.{saved_utc = 1, last_sync_utc = 1759700000, last_full_check_utc = 1759600000, history = 2, history_complete = true, oldest_loaded_utc = 1690000000};
+        copy: Store;
+        start = seconds_since_init();
+        status := store_file_roundtrip_test(*store, *copy, meta, secret);
+        print("      % transactions: saved and reopened in % ms\n", store.transactions.count, formatFloat((seconds_since_init() - start) * 1000, trailing_width = 1));
+        check(status == .OK, tprint("store file round trip (%)", status));
+        same := copy.transactions.count == store.transactions.count && copy.accounts.count == store.accounts.count
+             && copy.categories.count == store.categories.count && copy.tags.count == store.tags.count;
+        for a, i: store.accounts {
+            if !same break;
+            b := copy.accounts[i];
+            same = a.id == b.id && a.name == b.name && a.balance == b.balance && a.type == b.type && a.ownership == b.ownership && a.created.utc == b.created.utc;
+        }
+        for a, i: store.transactions {
+            if !same break;
+            b := *copy.transactions[i];
+            same = a.id == b.id && a.description == b.description && a.raw_text == b.raw_text && a.message == b.message && a.note == b.note
+                && a.amount == b.amount && a.hold_amount == b.hold_amount && a.round_up == b.round_up && a.cashback == b.cashback
+                && a.created.utc == b.created.utc && a.created.offset == b.created.offset && a.settled.utc == b.settled.utc
+                && a.account == b.account && a.transfer_account == b.transfer_account && a.category == b.category && a.parent_category == b.parent_category
+                && a.tag_count == b.tag_count && a.status == b.status && a.card_method == b.card_method && a.day == b.day
+                && a.has_hold == b.has_hold && a.has_foreign == b.has_foreign && a.foreign_value == b.foreign_value && a.attachment_id == b.attachment_id;
+            for t: 0..a.tag_count - 1 if same same = copy.tags[b.tags[t]].label == store.tags[a.tags[t]].label;
+            if same same = store_find_transaction(*copy, a.id) == i;
+            if !same print("      first difference at transaction % (%)\n", i, a.id);
+        }
+        check(same, "every account, category, tag and transaction survives the round trip");
+        store_reset(*copy);
+
+        check(store_file_roundtrip_test(*store, *copy, meta, secret, tamper = true) == .CORRUPT, "an altered store file is rejected");
+        check(copy.transactions.count == 0, "nothing from a rejected file is loaded");
+        check(store_file_roundtrip_test(*store, *copy, meta, secret, wrong_secret = "up:yeah:another-token") == .LOCKED, "another token can't open the store file");
+    }
+
     // Comparison periods.
     oct := month_key(2026, 10);
     so_far := Period.{first_day_of_month(oct), days_from_civil(2026, 10, 6)};

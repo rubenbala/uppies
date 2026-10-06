@@ -16,7 +16,7 @@ draw_settings_page :: (r_in: Rect) {
 
     connection_r := cut_top(*left, ifx sync.auth_failed then px(236) else px(176));
     cut_top(*left, gap);
-    data_r := cut_top(*left, px(262));
+    data_r := cut_top(*left, px(352));
     cut_top(*left, gap);
     draw_connection_panel(appear_begin(connection_r, 0), st);
     appear_end();
@@ -97,7 +97,7 @@ draw_data_panel :: (r: Rect) {
     if ui_dropdown_strings("history##settings", cut_right(*row, px(150)), HISTORY_LABELS, *history) {
         settings.history = cast(History_Depth) history;
         settings_save();
-        app_toast(.INFO, "Applies the next time everything is reloaded.");
+        app_toast(.INFO, "Takes effect the next time Uppies opens, or when you delete local data.");
     }
     cut_top(*inner, px(4));
     row = cut_top(*inner, px(ROW));
@@ -111,6 +111,16 @@ draw_data_panel :: (r: Rect) {
     }
     cut_top(*inner, px(6));
     if ui_toggle("Leave out transfers between my accounts", cut_top(*inner, px(40)), *settings.exclude_transfers, "Moving money to a saver isn't income or spending. Affects every total.") settings_save();
+    if ui_toggle("Keep an encrypted copy on this PC", cut_top(*inner, px(40)), *settings.store_locally, "Opens instantly and downloads only what changed. Only your Windows account, with this token, can read it.") {
+        settings_save();
+        if settings.store_locally {
+            local_data_save();
+            app_toast(.SUCCESS, "Your data will be kept on this PC, encrypted.");
+        } else {
+            local_data_delete();
+            app_toast(.INFO, "Local copy deleted. Uppies will download everything each time it opens.");
+        }
+    }
     cut_top(*inner, px(8));
     ui_divider(inner.x, inner.y, inner.w, theme.divider);
     cut_top(*inner, px(8));
@@ -120,11 +130,50 @@ draw_data_panel :: (r: Rect) {
     last := ifx sync.last_sync_utc then tprint("% (%)", format_time_seconds(Timestamp.{sync.last_sync_utc, app.now.offset_minutes}), format_relative(app.now.utc_seconds - sync.last_sync_utc)) else "Not yet";
     draw_field(cut_top(*inner, px(22)), "Last sync", last);
 
+    // What's on disk.
+    stored := "";
+    stored_color: Color = 0;
+    if sync.demo && !local_data.cache_demo {
+        stored = "Sample data isn't stored";
+    } else if !settings.store_locally {
+        stored = "Nothing: downloaded fresh each time";
+    } else {
+        size, saved_utc, failed := store_file_info();
+        if failed {
+            stored = "Couldn't save the latest changes; will try again";
+            stored_color = theme.held;
+        } else if size {
+            when := ifx saved_utc then tprint(" · saved %", format_relative(app.now.utc_seconds - saved_utc)) else "";
+            stored = tprint("% · AES-256 encrypted%", format_bytes(size), when);
+        } else {
+            stored = "Not saved yet";
+        }
+    }
+    draw_field(cut_top(*inner, px(22)), "On this PC", stored, false, stored_color);
+
+    // Up has no feed of changes: older edits are found by reading everything again.
+    check := "";
+    if sync.refreshing && sync.refresh_kind == .FULL {
+        check = "Checking every transaction now…";
+    } else if sync.last_full_check_utc {
+        due := sync_full_check_due_in();
+        next := ifx due <= 0 then "due now" else tprint("next in %", format_span(due));
+        check = tprint("Weekly · last %, %", format_relative(app.now.utc_seconds - sync.last_full_check_utc), next);
+    } else {
+        check = "Weekly · after the first full download";
+    }
+    draw_field(cut_top(*inner, px(22)), "Full check", check);
+
     buttons := cut_bottom(*inner, px(28));
-    if ui_button("Refresh now", cut_left(*buttons, px(112)), .SECONDARY, .REFRESH, enabled = sync.phase == .READY && !sync.refreshing) sync_refresh(true);
+    idle := sync.phase == .READY && !sync.refreshing;
+    if ui_button("Refresh now", cut_left(*buttons, ui_button_width("Refresh now", .REFRESH)), .SECONDARY, .REFRESH, enabled = idle && !sync.from_saved) sync_refresh(true);
     cut_left(*buttons, px(8));
-    if ui_button("Reload everything", cut_left(*buttons, px(146)), .SECONDARY, .SYNC, enabled = sync.phase == .READY) {
-        ask_confirm(.RELOAD, "Reload everything?", tprint("Uppies will drop what it has loaded and fetch your accounts and % again. Large histories take a little while.", to_lower_temp(HISTORY_LABELS[settings.history])), "Reload");
+    if ui_button("Check all now", cut_left(*buttons, ui_button_width("Check all now", .SYNC)), .SECONDARY, .SYNC, enabled = idle && !sync.from_saved && sync.history_complete) sync_full_check();
+    cut_left(*buttons, px(8));
+    if ui_button("Delete local data", cut_left(*buttons, ui_button_width("Delete local data", .DELETE)), .DANGER, .DELETE, enabled = sync.phase == .READY || sync.phase == .LOADING) {
+        ask_confirm(.DELETE_LOCAL_DATA, "Delete local data?",
+            tprint("Uppies will delete the copy of your data stored on this PC and download your accounts and % from Up again. Your access token and settings are kept.", to_lower_temp(HISTORY_LABELS[settings.history])),
+            "Delete and download again");
     }
 }
 

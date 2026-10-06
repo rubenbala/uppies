@@ -9,12 +9,29 @@
 //             replaces what the store had for it, so settlements, edits and
 //             declined holds all come through.
 //
+// With local data (local_data.jai) the app opens on what it saved last time
+// and, once Up answers the ping, catches up instead of loading:
+//
+//   catch up  categories, tags, balances, and the same kind of window going
+//             back CATCH_UP_DAYS (or to the last sync, if older): new
+//             transactions, settlements, declined holds and recent edits.
+//   resume    a history download that was cut short continues from the
+//             oldest transaction it reached (filter[until]).
+//   full check  Up has no feed of changes, so an edit to an old transaction
+//             (recategorised in the Up app, say) only shows up by reading it
+//             again. Every FULL_CHECK_DAYS the whole history is read again in
+//             the background, and replaces the store in one step.
+//
 // Each connection is a generation: replies to an older one are dropped.
 // Transient failures (network, 429, 5xx) retry with backoff; a 401 stops
 // everything and asks for a new token. Writes (category, tags) apply at
 // once and are rolled back if the API refuses them.
 
 Sync_Phase :: enum u8 { OFFLINE; CONNECTING; LOADING; READY; }
+Refresh_Kind :: enum u8 { RECENT; CATCH_UP; FULL; }
+
+CATCH_UP_DAYS   :: 45;
+FULL_CHECK_DAYS :: 7;
 Load_State :: enum u8 { IDLE; LOADING; LOADED; FAILED; }
 
 Sync :: struct {
@@ -40,6 +57,14 @@ Sync :: struct {
     refresh_waiting: int;
     refresh_new:     int;
     refresh_manual:  bool;
+    refresh_kind:    Refresh_Kind;
+    edited_during_refresh: [..] string;   // Transactions written to while a refresh was out.
+
+    connected:       bool;     // Up answered the ping, this generation.
+    from_saved:      bool;     // Showing local data that hasn't caught up with Up yet.
+    catch_up_at:     float64;  // Retry time for a failed catch-up (ui clock).
+    loaded_history:  History_Depth;        // The depth the store's history was loaded with.
+    last_full_check_utc: s64;
 
     last_sync_utc:  s64;
     last_sync_time: float64;
@@ -76,51 +101,91 @@ sync_start :: (token: string, demo: bool) {
     api_set_token(ifx demo then "up:demo:sample" else token);
     sync.generation += 1;
     sync.phase = .CONNECTING;
+    sync.connected = false;
     set_string(*sync.connect_error, "");
     sync.auth_failed = false;
+    // Show what was saved last time straight away; the ping confirms the
+    // token and then the app catches up with Up.
+    if local_data_open(token) {
+        sync.phase = .READY;
+        sync.from_saved = true;
+        app_on_connected();
+    }
     api_submit(.PING, "GET", "/util/ping", generation = sync.generation, urgent = true);
+}
+
+// Sync state as saved with the local data, and back.
+sync_meta :: () -> Store_File_Meta {
+    m: Store_File_Meta;
+    m.saved_utc           = platform_local_time().utc_seconds;
+    m.last_sync_utc       = sync.last_sync_utc;
+    m.last_full_check_utc = sync.last_full_check_utc;
+    m.history             = cast(u8) sync.loaded_history;
+    m.history_complete    = sync.history_complete;
+    m.oldest_loaded_utc   = sync.oldest_loaded_utc;
+    return m;
+}
+
+sync_restore :: (m: Store_File_Meta) {
+    sync.last_sync_utc       = m.last_sync_utc;
+    sync.last_full_check_utc = m.last_full_check_utc;
+    sync.loaded_history      = cast(History_Depth) m.history;
+    sync.history_complete    = m.history_complete;
+    sync.oldest_loaded_utc   = m.oldest_loaded_utc;
+    if !sync.oldest_loaded_utc && store.transactions.count sync.oldest_loaded_utc = store.transactions[store.transactions.count - 1].created.utc;
+    sync.accounts_done   = true;
+    sync.categories_done = true;
+    sync.tags_done       = true;
+    sync.pages           = 1;
+    sync.earliest_account_utc = platform_local_time().utc_seconds;
+    for store.accounts sync.earliest_account_utc = min(sync.earliest_account_utc, it.created.utc);
 }
 
 sync_disconnect :: () {
     sync.generation += 1;   // Anything still in flight is ignored.
+    local_data_delete();
     sync_reset_data();
     sync.phase = .OFFLINE;
+    sync.connected = false;
     free(sync.token);
     sync.token = "";
     api_set_token("");
 }
 
-// Forgets everything loaded and loads it all again.
+// Forgets everything loaded (and saved) and loads it all again.
 sync_reload_all :: () {
     if sync.phase == .OFFLINE || sync.phase == .CONNECTING return;
+    local_data_delete();
     sync.generation += 1;
     sync_reset_data();
+    sync.connected = true;   // Still the same, already verified token.
     begin_load();
 }
 
 sync_refresh :: (manual := false) {
     if sync.phase != .READY || sync.refreshing || sync.auth_failed return;
+    if sync.from_saved {
+        // Still to catch up: that comes first, once Up has answered.
+        if sync.connected start_refresh(.CATCH_UP, manual);
+        return;
+    }
     if !store.transactions.count { sync_reload_all(); return; }
-
-    // The window: back to just before the oldest held transaction, and at
-    // least three days.
-    newest := store.transactions[0].created.utc;
-    window := newest - 3 * SECONDS_PER_DAY;
-    for store.transactions if it.status == .HELD window = min(window, it.created.utc - 60);
-    sync.refreshing = true;
-    sync.refresh_manual = manual;
-    sync.refresh_window = window;
-    sync.refresh_new = 0;
-    for * sync.refresh_batch free_transaction(it);
-    sync.refresh_batch.count = 0;
-    sync.refresh_waiting = 2;
-    api_submit(.ACCOUNTS, "GET", tprint("/accounts?%", query_param("page[size]", "100")), generation = sync.generation, arg = "refresh");
-    api_submit(.TRANSACTIONS, "GET", tprint("/transactions?%&%", query_param("page[size]", tprint("%", PAGE_SIZE)), query_param("filter[since]", format_rfc3339_utc(window))),
-               generation = sync.generation, arg = "refresh", window_since = window);
+    start_refresh(.RECENT, manual);
 }
 
 sync_is_busy :: () -> bool {
-    return sync.phase == .CONNECTING || (sync.phase == .LOADING) || sync.refreshing;
+    return sync.phase == .CONNECTING || (sync.phase == .LOADING) || sync.refreshing || sync.from_saved;
+}
+
+// Seconds until the next full check is due (negative: overdue).
+sync_full_check_due_in :: () -> s64 {
+    return sync.last_full_check_utc + FULL_CHECK_DAYS * SECONDS_PER_DAY - platform_local_time().utc_seconds;
+}
+
+// Reads the whole history again now (Settings).
+sync_full_check :: () {
+    if sync.phase != .READY || sync.refreshing || sync.auth_failed || sync.from_saved || !sync.history_complete return;
+    start_refresh(.FULL, true);
 }
 
 // 0..1 through the history load, estimated from how far back it has got.
@@ -144,6 +209,7 @@ sync_set_category :: (txn_index: s32, category: s32) {
     if previous == category return;
     body := ifx category >= 0 then tprint("{\"data\":{\"type\":\"categories\",\"id\":\"%\"}}", store.categories[category].id) else "{\"data\":null}";
     store_set_category(*store, txn_index, category);
+    note_edit(t.id);
     sync.pending_writes += 1;
     api_submit(.SET_CATEGORY, "PATCH", tprint("/transactions/%/relationships/category", t.id), body, ref = t.id, arg = ifx previous >= 0 then store.categories[previous].id else "", arg_int = category, urgent = true);
 }
@@ -155,6 +221,7 @@ sync_add_tag :: (txn_index: s32, label: string) {
     tag := store_intern_tag(*store, label);
     if txn_has_tag(t, tag) return;
     store_add_tag(*store, txn_index, tag);
+    note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
     api_submit(.ADD_TAG, "POST", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true);
@@ -165,6 +232,7 @@ sync_remove_tag :: (txn_index: s32, tag: s32) {
     t := *store.transactions[txn_index];
     label := store.tags[tag].label;
     store_remove_tag(*store, txn_index, tag);
+    note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
     api_submit(.REMOVE_TAG, "DELETE", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true);
@@ -236,6 +304,14 @@ sync_update :: () {
             else ui_wake_at(sync.next_auto);
         }
     }
+    if sync.catch_up_at > 0 && sync.from_saved && sync.connected && !sync.refreshing && !sync.auth_failed {
+        if now >= sync.catch_up_at {
+            sync.catch_up_at = 0;
+            start_refresh(.CATCH_UP);
+        } else {
+            ui_wake_at(sync.catch_up_at);
+        }
+    }
     if sync.retry_at > 0 {
         if now >= sync.retry_at {
             sync.retry_at = 0;
@@ -274,6 +350,11 @@ sync_reset_data :: () {
     sync.refreshing = false;
     for * sync.refresh_batch free_transaction(it);
     sync.refresh_batch.count = 0;
+    clear_edits();
+    sync.from_saved = false;
+    sync.catch_up_at = 0;
+    sync.last_full_check_utc = 0;
+    sync.oldest_loaded_utc = 0;
     sync.last_sync_utc = 0;
     sync.next_auto = 0;
     set_string(*sync.error, "");
@@ -298,6 +379,7 @@ sync_reset_data :: () {
 
 begin_load :: () {
     sync.phase = .LOADING;
+    sync.loaded_history = settings.history;
     sync.load_started = ui.time;
     g := sync.generation;
     api_submit(.ACCOUNTS,   "GET", tprint("/accounts?%", query_param("page[size]", "100")), generation = g);
@@ -316,11 +398,97 @@ history_since :: () -> s64 {
     return platform_local_time().utc_seconds - days * SECONDS_PER_DAY;
 }
 
-begin_transactions :: () {
+// The history, newest first. `until`: only what was created before it (to
+// continue a download that was cut short).
+begin_transactions :: (until: s64 = -1) {
     path := tprint("/transactions?%", query_param("page[size]", tprint("%", PAGE_SIZE)));
     since := history_since();
     if since >= 0 path = tprint("%&%", path, query_param("filter[since]", format_rfc3339_utc(since)));
+    if until >= 0 path = tprint("%&%", path, query_param("filter[until]", format_rfc3339_utc(until)));
     api_submit(.TRANSACTIONS, "GET", path, generation = sync.generation);
+}
+
+start_refresh :: (kind: Refresh_Kind, manual := false) {
+    if sync.refreshing return;
+    now := platform_local_time().utc_seconds;
+
+    // RECENT and CATCH_UP: back to just before the oldest held transaction,
+    // at least three days, and for a catch-up at least CATCH_UP_DAYS and
+    // the last sync. FULL: everything the history setting covers.
+    window: s64 = 0;
+    if kind == .FULL {
+        window = max(history_since(), 0);
+    } else {
+        window = now - 3 * SECONDS_PER_DAY;
+        if store.transactions.count window = min(window, store.transactions[0].created.utc - 3 * SECONDS_PER_DAY);
+        for store.transactions if it.status == .HELD window = min(window, it.created.utc - 60);
+        if kind == .CATCH_UP {
+            window = min(window, now - CATCH_UP_DAYS * SECONDS_PER_DAY);
+            if sync.last_sync_utc window = min(window, sync.last_sync_utc - 3 * SECONDS_PER_DAY);
+        }
+        // Never reach past what the history covers: that would look like
+        // transactions disappearing.
+        window = max(window, max(history_since(), 0));
+        if !sync.history_complete window = max(window, sync.oldest_loaded_utc);
+    }
+
+    sync.refreshing = true;
+    sync.refresh_kind = kind;
+    sync.refresh_manual = manual;
+    sync.refresh_window = window;
+    sync.refresh_new = 0;
+    for * sync.refresh_batch free_transaction(it);
+    sync.refresh_batch.count = 0;
+    clear_edits();
+    sync.refresh_waiting = 2;
+    g := sync.generation;
+    api_submit(.ACCOUNTS, "GET", tprint("/accounts?%", query_param("page[size]", "100")), generation = g, arg = "refresh");
+    path := tprint("/transactions?%", query_param("page[size]", tprint("%", PAGE_SIZE)));
+    if window > 0 path = tprint("%&%", path, query_param("filter[since]", format_rfc3339_utc(window)));
+    api_submit(.TRANSACTIONS, "GET", path, generation = g, arg = "refresh", window_since = window);
+}
+
+// A full check is due when the history is complete and hasn't been read
+// end to end for FULL_CHECK_DAYS.
+continue_after_refresh :: () {
+    if sync.from_saved || sync.auth_failed return;
+    if !sync.history_complete {
+        // Pick up a download that was cut short where it stopped.
+        sync.phase = .LOADING;
+        sync.load_started = ui.time;
+        begin_transactions(sync.oldest_loaded_utc + 1);
+        return;
+    }
+    if sync_full_check_due_in() <= 0 start_refresh(.FULL);
+}
+
+note_edit :: (id: string) {
+    if !sync.refreshing return;
+    for sync.edited_during_refresh if it == id return;
+    array_add(*sync.edited_during_refresh, copy_string(id));
+}
+
+clear_edits :: () {
+    for sync.edited_during_refresh free(it);
+    sync.edited_during_refresh.count = 0;
+}
+
+// What the refresh read may predate an edit made since it started: keep the
+// local category and tags for those (the write itself is on its way to Up).
+keep_local_edits :: (batch: [] Transaction) {
+    if !sync.edited_during_refresh.count return;
+    for * t: batch {
+        edited := false;
+        for sync.edited_during_refresh if it == t.id { edited = true; break; }
+        if !edited continue;
+        index := store_find_transaction(*store, t.id);
+        if index < 0 continue;
+        local := *store.transactions[index];
+        t.category        = local.category;
+        t.parent_category = local.parent_category;
+        t.tags            = local.tags;
+        t.tag_count       = local.tag_count;
+    }
 }
 
 finish_sync :: () {
@@ -391,6 +559,12 @@ handle_reply :: (req: *Api_Request) {
                 return;
             }
             if !ok {
+                if sync.from_saved {
+                    // Keep showing the saved data: offline, or the token was
+                    // revoked (which Settings explains). Transient failures retry.
+                    fail(req, "Connecting to Up");
+                    return;
+                }
                 message := api_error_message(req);
                 if req.result.status == 401 message = "Up didn't accept that token (401). Check it was copied in full and hasn't been revoked.";
                 set_string(*sync.connect_error, message);
@@ -398,6 +572,15 @@ handle_reply :: (req: *Api_Request) {
                 return;
             }
             set_string(*sync.connect_error, "");
+            set_string(*sync.error, "");
+            sync.retry_attempts = 0;
+            sync.connected = true;
+            if sync.from_saved {
+                // Categories and tags first, so the catch-up resolves against them.
+                api_submit(.CATEGORIES, "GET", "/categories", generation = sync.generation, arg = "catch-up");
+                api_submit(.TAGS, "GET", tprint("/tags?%", query_param("page[size]", "100")), generation = sync.generation);
+                return;
+            }
             app_on_connected();
             begin_load();
 
@@ -435,6 +618,7 @@ handle_reply :: (req: *Api_Request) {
             for * json_array(json_get(*doc, "data")) array_add(*incoming, parse_category(it));
             store_merge_categories(*store, incoming);
             sync.categories_done = true;
+            if req.arg == "catch-up" { start_refresh(.CATCH_UP); return; }
             maybe_start_transactions();
 
         case .TAGS;
@@ -471,6 +655,7 @@ handle_reply :: (req: *Api_Request) {
                     known := 0;
                     for sync.refresh_batch if store_find_transaction(*store, it.id) >= 0 known += 1;
                     sync.refresh_new = sync.refresh_batch.count - known;
+                    keep_local_edits(sync.refresh_batch);
                     store_merge_transactions(*store, sync.refresh_batch, ui.time, req.window_since);
                     sync.refresh_batch.count = 0;   // The store owns them now.
                     refresh_part_done();
@@ -486,6 +671,8 @@ handle_reply :: (req: *Api_Request) {
             } else {
                 sync.history_complete = true;
                 sync.phase = .READY;
+                // Every transaction was just read from Up: that's a full check.
+                sync.last_full_check_utc = platform_local_time().utc_seconds;
                 finish_sync();
             }
 
@@ -599,17 +786,27 @@ refresh_part_done :: () {
     sync.refresh_waiting -= 1;
     if sync.refresh_waiting > 0 return;
     sync.refreshing = false;
+    clear_edits();
     finish_sync();
-    if sync.refresh_manual || sync.refresh_new > 0 {
-        if sync.refresh_new > 0 app_toast(.INFO, tprint("% new transaction%", sync.refresh_new, ifx sync.refresh_new == 1 then "" else "s"));
-        else app_toast(.SUCCESS, "Up to date.");
+    kind := sync.refresh_kind;
+    if kind == .CATCH_UP sync.from_saved = false;
+    if kind == .FULL sync.last_full_check_utc = sync.last_sync_utc;
+    if sync.refresh_new > 0 {
+        app_toast(.INFO, tprint("% new transaction%", sync.refresh_new, ifx sync.refresh_new == 1 then "" else "s"));
+    } else if sync.refresh_manual {
+        app_toast(.SUCCESS, ifx kind == .FULL then "Checked every transaction: everything matches Up." else "Up to date.");
     }
+    continue_after_refresh();
 }
 
 refresh_failed :: (req: *Api_Request) {
     sync.refreshing = false;
+    clear_edits();
     for * sync.refresh_batch free_transaction(it);
     sync.refresh_batch.count = 0;
+    // A catch-up that couldn't finish is tried again soon, whatever the
+    // automatic refresh setting.
+    if sync.refresh_kind == .CATCH_UP && transient(req) sync.catch_up_at = ui.time + 30;
     message := api_error_message(req);
     set_string(*sync.error, tprint("Refresh failed: %", message));
     sync.error_status = req.result.status;
