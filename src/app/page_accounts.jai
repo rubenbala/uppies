@@ -1,11 +1,12 @@
 // Accounts: how are the balances moving? A table of accounts, and for the
 // ones chosen in it, their balance over time and month-by-month ledger.
-// Clicking a row chooses that account alone; ticking rows (or Ctrl+click)
-// chooses several, and everything beside the table adds them together.
+// Clicking a row chooses that account alone; Ctrl+click (or Shift+click for
+// a run of rows) chooses several, and everything beside the table adds them
+// together.
 
 Accounts_State :: struct {
     checked: [..] bool;    // By account index: the chosen accounts. Empty until the accounts arrive.
-    cursor:  int = -1;     // Account the keyboard moves from: the one last clicked or ticked.
+    cursor:  int = -1;     // Account the keys and Shift+click start from.
     was_single := true;    // Exactly one account was chosen last frame.
     range:   int = 1;
     table:        Table_State;
@@ -177,7 +178,7 @@ chosen_flow :: (st: *Accounts_State, p: Period) -> Flow_Totals {
 //
 
 ACCOUNT_TABLE_COLUMNS :: Column.[
-    .{"",         0,   .LEFT,  false, 0},     // "Account": drawn with the tick-all box.
+    .{"Account",  0,   .LEFT,  false, 0},
     .{"Type",     92,  .LEFT,  false, 660},
     .{"Change",   96,  .RIGHT, false, 0},
     .{"In",       92,  .RIGHT, false, 560},
@@ -185,10 +186,8 @@ ACCOUNT_TABLE_COLUMNS :: Column.[
     .{"Balance",  110, .RIGHT, false, 0},
 ];
 
-CHECK_INDENT :: 24.0;   // A tick box and the gap after it.
-
 draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Period) {
-    content, _ := panel_begin(r, "Accounts", tprint("% · click one, or tick several to add them together", to_lower_temp(RANGE_LABELS[st.range])));
+    content, _ := panel_begin(r, "Accounts", tprint("% · Ctrl+click or Shift+click to add accounts together", to_lower_temp(RANGE_LABELS[st.range])));
     count := chosen_count(st);
     single := count == 1;
     // One chosen account gets the table's gliding highlight; several are
@@ -206,60 +205,24 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
     totals_r := cut_bottom(*body, px(34));
     table_begin(*tbl, "accounts-table", body, ACCOUNT_TABLE_COLUMNS, *st.table, order.count, keyboard = true, row_height = px(36), highlight = single);
 
-    // The header sits outside the body's clip.
-    pop_clip();
-    head := rect(tbl.x[0] + px(CELL_PAD), tbl.header.y, tbl.w[0] - px(2 * CELL_PAD), tbl.header.h);
-    title_w := measure_caps("Account");
-    if order.count {
-        all := count == order.count;
-        if ui_checkbox("##accounts-all", rect(head.x, head.y, px(CHECK_INDENT) + title_w, head.h), *all, mixed = count > 0) {
-            for * st.checked it.* = all;
-        }
-    }
-    draw_caps(rect(head.x + px(CHECK_INDENT), head.y, head.w - px(CHECK_INDENT), head.h), "Account", theme.text_muted);
-    push_clip(tbl.body);
-
     if !order.count {
         table_end(*tbl);
         table_skeleton(*tbl, 6);
         return;
     }
-    toggled := -1;
     for i: tbl.first..tbl.last {
         acct := order[i];
         a := *store.accounts[acct];
         row := table_row(*tbl, i);
-        name := table_cell(*tbl, row, 0);
-
-        // The tick box: a click on it (or Ctrl+click anywhere on the row)
-        // adds or removes the account; Space does when it has focus.
-        cid := ui_id("account-check", acct);
-        cw, is_new := ui_widget(cid);
-        chosen := st.checked[acct];
-        if is_new cw.t = ifx chosen then 1.0 else 0.0;
-        ui_animate(*cw.t, ifx chosen then 1.0 else 0.0, 26);
-        check_r := rect(row.x, row.y, name.x - row.x + px(CHECK_INDENT), row.h);
-        over := tbl.hovered_row == i && rect_contains(check_r, input.mouse_x, input.mouse_y);
-        if over ui.cursor = .HAND;
-        ui_animate(*cw.hover, ifx over then 1.0 else 0.0, 20);
-        ui_focusable(cid);
-        ui_update_focus(cw, cid);
-        if (tbl.clicked == i && (over || ctrl_down())) || ui_key_activate(cid) toggled = acct;
-
-        if !single && cw.t > 0.01 {
+        if !single && st.checked[acct] {
             mark := snap(rect(row.x, row.y, tbl.body.w, row.h - hairline()));
-            draw_rect(mark, color_with_alpha(theme.accent_wash, cw.t));
-            draw_rect(snap(rect(mark.x, mark.y, px(2), mark.h)), color_with_alpha(theme.accent, cw.t));
+            draw_rect(mark, theme.accent_wash);
+            draw_rect(snap(rect(mark.x, mark.y, px(2), mark.h)), theme.accent);
         }
-        box := snap(rect(name.x, row.y + (row.h - px(CHECKBOX_SIZE)) * 0.5, px(CHECKBOX_SIZE), px(CHECKBOX_SIZE)));
-        draw_checkbox(box, cw.t, cw.hover);
-        ui_focus_ring(box, cw.focus, px(2));
-
-        text_r := name;
-        cut_left(*text_r, px(CHECK_INDENT));
-        draw_text_fit(fonts.regular, px(theme.font_size_body), rect(text_r.x, text_r.y + px(3), text_r.w, px(18)), a.name, theme.text);
+        name := table_cell(*tbl, row, 0);
+        draw_text_fit(fonts.regular, px(theme.font_size_body), rect(name.x, name.y + px(3), name.w, px(18)), a.name, theme.text);
         owner := ifx a.ownership == .JOINT then "Joint" else "Individual";
-        draw_text_fit(fonts.regular, px(theme.font_size_small), rect(text_r.x, text_r.y + px(19), text_r.w, px(14)), tprint("% · since %", owner, format_date(ts_day(a.created))), theme.text_muted);
+        draw_text_fit(fonts.regular, px(theme.font_size_small), rect(name.x, name.y + px(19), name.w, px(14)), tprint("% · since %", owner, format_date(ts_day(a.created))), theme.text_muted);
         if table_column_shown(*tbl, 1) draw_text_fit(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 1), account_type_label(a), theme.text_secondary);
         change := a.balance - balance_at(acct, period.first - 1);
         draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 2), ifx change then format_money(change, .ALWAYS) else "—",
@@ -272,11 +235,8 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
         draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 5), format_money(a.balance), theme.text, .RIGHT, .{tabular = true});
     }
     table_end(*tbl);
-    if toggled >= 0 {
-        st.checked[toggled] = !st.checked[toggled];
-        st.cursor = toggled;
-    } else if tbl.clicked >= 0 {
-        choose_only(st, order[tbl.clicked]);
+    if tbl.clicked >= 0 {
+        pick_on_click(st, order, tbl.clicked);
     } else if tbl.selection_changed && st.table.selected >= 0 && st.table.selected < order.count {
         choose_only(st, order[st.table.selected]);   // Moved with the keys.
     }
@@ -303,6 +263,25 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
         draw_text_in_rect(fonts.semibold, px(theme.font_size_label), table_cell(*tbl, row, 4), format_money(f.money_out), theme.text_secondary, .RIGHT, .{tabular = true});
     }
     draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 5), format_money(total), theme.text, .RIGHT, .{tabular = true});
+}
+
+// A plain click chooses one account; Ctrl+click adds or removes one (but
+// never the last); Shift+click chooses the run of rows from the cursor, as
+// on the Transactions page.
+pick_on_click :: (st: *Accounts_State, order: [] s32, clicked: int) {
+    acct := order[clicked];
+    cursor_row := -1;
+    for order if it == st.cursor cursor_row = it_index;
+    if ctrl_down() {
+        if !st.checked[acct] || chosen_count(st) > 1 st.checked[acct] = !st.checked[acct];
+        st.cursor = acct;
+    } else if shift_down() && cursor_row >= 0 {
+        for * st.checked it.* = false;
+        for min(cursor_row, clicked)..max(cursor_row, clicked) st.checked[order[it]] = true;
+        // The cursor stays put: further Shift+clicks run from the same row.
+    } else {
+        choose_only(st, acct);
+    }
 }
 
 //
@@ -369,7 +348,7 @@ draw_account_flow :: (r: Rect, st: *Accounts_State) {
 draw_account_chart :: (r: Rect, st: *Accounts_State) {
     if !chosen_count(st) {
         content, _ := panel_begin(r, "Balance");
-        draw_empty_state(content, "No account selected", "Tick one or more accounts to see their balance together.");
+        draw_empty_state(content, "No account selected");
         return;
     }
     period := range_period(st.range);

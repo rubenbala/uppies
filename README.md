@@ -11,7 +11,7 @@ Pages sit in a tab bar along the top (there is no sidebar):
 |--------------|-------------------------------------------------------------------------|
 | Overview     | Where do I stand? Net position, balances with 30-day trends, cash flow, this month's spending, recent activity, and what needs attention (holds, uncategorised purchases, sync problems). |
 | Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags. Ctrl+click (or Shift+click) several to tag them all at once. |
-| Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Tick several accounts (or Ctrl+click) to see them added together. |
+| Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Ctrl+click (or Shift+click) several to see them added together. |
 | Spending     | Where the money goes: categories grouped by parent with comparisons, 12-month stacked chart, top merchants. |
 | Tags         | What each tag cost, by category and by month.                           |
 | Webhooks     | Create, ping and delete webhooks; delivery health and logs with payloads. |
@@ -77,7 +77,7 @@ Scripted and timed runs never read or write the saved token or settings.
 | / or Ctrl+F             | Search transactions                           |
 | F5 or Ctrl+R            | Refresh from Up                               |
 | ↑ ↓ PgUp PgDn Home End  | Move through the focused table                |
-| Ctrl+click, Shift+click | Choose several transactions, to tag them together |
+| Ctrl+click, Shift+click | Choose several transactions, to tag them together, or several accounts, to add them together |
 | Esc                     | Close a menu, clear a search, close the inspector |
 | Tab / Shift+Tab         | Move keyboard focus; Enter or Space activates |
 
