@@ -195,7 +195,8 @@ draw_inspector :: (r: Rect, st: *Inspector_State, index: s32) -> bool {
 }
 
 // The inspector for several transactions at once (`indices`, two or more):
-// what they add up to, the tags they carry, and adding a tag to them all.
+// what they add up to, the categories and tags they carry, and moving them
+// all to one category or adding a tag to them all.
 // Returns true when the close button was pressed.
 draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool {
     close := false;
@@ -213,8 +214,10 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     }
     ui_animate(*st.switch_t, 1, 14);
 
-    // What they add up to, and the tags on them.
+    // What they add up to, and the categories and tags on them.
     money_in, money_out: s64;
+    categorizable := 0;
+    category_counts := NewArray(store.categories.count + 1, int,, temp);   // By category + 1: [0] is uncategorised.
     first_day, last_day := store.transactions[indices[0]].day, store.transactions[indices[0]].day;
     held := 0;
     full := 0;   // Already carrying as many tags as Up allows.
@@ -231,6 +234,10 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
         if accounts < 0 accounts = t.account;
         else if accounts != t.account several_accounts = true;
         for i: 0..t.tag_count - 1 tag_counts[t.tags[i]] += 1;
+        if t.categorizable {
+            categorizable += 1;
+            category_counts[t.category + 1] += 1;
+        }
     }
 
     view := rect_inset_xy(content, 0, 0);
@@ -253,6 +260,50 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     if held when = tprint("% · % held", when, held);
     draw_text_in_rect(fonts.regular, px(theme.font_size_label), rect(x, y, w, px(16)), when, theme.text_muted);
     y += px(26);
+
+    // Category: one for them all. The list counts how many are in each now.
+    uncategorizable := indices.count - categorizable;
+    section("Category", *y, x, w, ifx uncategorizable && categorizable then tprint("% of % can be categorised", categorizable, indices.count) else "");
+    if categorizable {
+        items, map := category_picker_items();
+        shared := -1;   // The item they all share, if they do.
+        kinds := 0;
+        for * items {
+            if map[it_index] == -3 continue;
+            n := category_counts[map[it_index] + 1];
+            if !n continue;
+            it.detail = format_grouped(n);
+            kinds += 1;
+            if n == categorizable shared = it_index;
+        }
+        picked := shared;
+        prefix := ifx shared < 0 then tprint("% categories", kinds) else "";
+        if ui_dropdown("category##bulk", rect(x, y, w, px(30)), items, *picked, prefix, popup_width = w) {
+            if picked >= 0 && picked < map.count && map[picked] != -3 {
+                category := map[picked];
+                moved := 0;
+                for indices {
+                    t := *store.transactions[it];
+                    if !t.categorizable || t.category == category continue;
+                    sync_set_category(it, category);
+                    moved += 1;
+                }
+                name := ifx category >= 0 then store.categories[category].name else "Uncategorised";
+                message := ifx category >= 0 then tprint("Moved % to %.", format_count(moved, "transaction", "transactions"), name)
+                           else tprint("Took % out of their categories.", format_count(moved, "transaction", "transactions"));
+                if uncategorizable message = tprint("% % skipped: not categorisable.", message, uncategorizable);
+                app_toast(.SUCCESS, message);
+            }
+        }
+        y += px(30);
+        y += px(6);
+        hint := ifx uncategorizable then "Transfers, interest and payments to people stay as they are." else "Applies to all of them.";
+        draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), hint, theme.text_faint);
+        y += px(20);
+    } else {
+        draw_text_in_rect(fonts.regular, px(theme.font_size_label), rect(x, y, w, px(18)), "None can be categorised: transfers, interest and payments to people aren't.", theme.text_muted);
+        y += px(26);
+    }
 
     // Tags: those already on some of them, then adding one to all.
     section("Tags", *y, x, w, "on the selected transactions");

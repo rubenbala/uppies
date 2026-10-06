@@ -5,7 +5,8 @@
 // list is grouped by day, each day's header carrying its money in and out.
 // Selecting a row opens the inspector on the right, where the category and
 // tags can be changed. Ctrl+click (or Shift+click for a run of rows) chooses
-// several; the inspector then sums them up and tags them all at once.
+// several; the inspector then sums them up, and moves them to one category
+// or tags them all at once.
 
 Transactions_State :: struct {
     search:    Text_Buffer;
