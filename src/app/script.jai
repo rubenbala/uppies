@@ -11,6 +11,7 @@
 //   text STRING       type text
 //   move X Y          move the mouse (logical units)
 //   click X Y         click there
+//   ctrlclick X Y     click there with Ctrl held (shiftclick: with Shift)
 //   wheel N           scroll (positive: up)
 //   quit
 //
@@ -24,6 +25,7 @@ Script :: struct {
     release_next: bool;
     release_key: int;
     release_ctrl: bool;
+    release_shift: bool;
     shot_path: string;    // Captured after the next render.
 }
 
@@ -50,8 +52,10 @@ script_frame :: () {
         if input.mouse_down[Mouse_Button.LEFT] input_on_mouse_button(.LEFT, false);
         if script.release_key input_on_key(script.release_key, false);
         if script.release_ctrl input_on_key(cast(int) Key.CONTROL, false);
+        if script.release_shift input_on_key(cast(int) Key.SHIFT, false);
         script.release_key = 0;
         script.release_ctrl = false;
+        script.release_shift = false;
         return;
     }
     now := seconds_since_init();
@@ -93,7 +97,11 @@ script_frame :: () {
                 x, y := parse_point(arg);
                 input_on_mouse_move(x, y);
                 return;
-            case "click";
+            case "click"; #through;
+            case "ctrlclick"; #through;
+            case "shiftclick";
+                if command == "ctrlclick"  { input_on_key(cast(int) Key.CONTROL, true); script.release_ctrl = true; }
+                if command == "shiftclick" { input_on_key(cast(int) Key.SHIFT, true); script.release_shift = true; }
                 input.synthetic = true;
                 x, y := parse_point(arg);
                 input_on_mouse_move(x, y);

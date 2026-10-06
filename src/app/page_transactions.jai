@@ -4,7 +4,8 @@
 // narrow the list; the strip under it sums what is shown. Sorted by date the
 // list is grouped by day, each day's header carrying its money in and out.
 // Selecting a row opens the inspector on the right, where the category and
-// tags can be changed.
+// tags can be changed. Ctrl+click (or Shift+click for a run of rows) chooses
+// several; the inspector then sums them up and tags them all at once.
 
 Transactions_State :: struct {
     search:    Text_Buffer;
@@ -26,6 +27,7 @@ Transactions_State :: struct {
     matched:   int;
 
     selected_id:  string;
+    picked:       [..] string;   // Ids of the transactions chosen together: none, or two or more.
     focus_search: bool;
     inspector:    Inspector_State;
     inspector_t:  float;
@@ -39,6 +41,7 @@ Txn_Row :: struct {
     count:     s32;
     money_in:  s64;
     money_out: s64;
+    picked:    bool;
 }
 
 COL_WHEN     :: 0;
@@ -78,7 +81,7 @@ show_transactions :: (category := -1, period := 0, status := 0, tag: s32 = -1, s
     st.tag = tag;
     acct_items, acct_map := account_filter_items();
     st.account = ifx account >= 0 then index_of_value(acct_map, cast(s32) account) else 0;
-    if select_id.count set_string(*st.selected_id, select_id);
+    if select_id.count { set_string(*st.selected_id, select_id); clear_picked(st); }
     st.rows_key = 0;
     st.table.scroll = .{};
     select_page(.TRANSACTIONS);
@@ -181,10 +184,11 @@ draw_transactions_page :: (r_in: Rect) {
     ];
     draw_metric_strip(strip, metrics, "txn-metrics");
 
-    // Table, with the inspector beside it when a row is selected.
+    // Table, with the inspector beside it when a row is selected (or several are).
+    multi := st.picked.count > 0;
     selected_txn: s32 = -1;
-    if st.table.selected >= 0 && st.table.selected < st.rows.count && !st.rows[st.table.selected].header selected_txn = st.rows[st.table.selected].txn;
-    ui_animate(*st.inspector_t, ifx selected_txn >= 0 then 1.0 else 0.0, 16);
+    if !multi && st.table.selected >= 0 && st.table.selected < st.rows.count && !st.rows[st.table.selected].header selected_txn = st.rows[st.table.selected].txn;
+    ui_animate(*st.inspector_t, ifx selected_txn >= 0 || multi then 1.0 else 0.0, 16);
     inspector_w := px(400) * ease_out_cubic(st.inspector_t);
     table_area := r;
     inspector_area: Rect;
@@ -198,9 +202,12 @@ draw_transactions_page :: (r_in: Rect) {
     t_rect := rect_inset_xy(content, 0, 0);
     t_rect.h -= hairline();
     tbl: Data_Table;
-    table_begin(*tbl, "txn-table", t_rect, TXN_COLUMNS, *st.table, st.rows.count, keyboard = true);
+    // With several chosen, each marks its own row (below) instead of the one highlight.
+    table_begin(*tbl, "txn-table", t_rect, TXN_COLUMNS, *st.table, st.rows.count, keyboard = true, highlight = !multi);
     if tbl.sort_changed st.rows_key = 0;
 
+    // Moving with the keys goes back to one transaction.
+    if tbl.selection_changed && multi clear_picked(st);
     // Headers aren't selectable: step over them.
     if tbl.selection_changed && st.table.selected >= 0 && st.table.selected < st.rows.count && st.rows[st.table.selected].header {
         if st.table.selected + 1 < st.rows.count st.table.selected += 1;
@@ -209,11 +216,13 @@ draw_transactions_page :: (r_in: Rect) {
         row := st.rows[st.table.selected];
         if !row.header set_string(*st.selected_id, store.transactions[row.txn].id);
     }
-    if key_pressed(.ESCAPE) && st.table.selected >= 0 && !ui.popup && !ui.text_focus_prev {
+    if key_pressed(.ESCAPE) && (st.table.selected >= 0 || st.picked.count) && !ui.popup && !ui.text_focus_prev {
         st.table.selected = -1;
         set_string(*st.selected_id, "");
+        clear_picked(st);
         input.key_pressed[Key.ESCAPE] = false;
     }
+    cursor := st.table.selected;   // Before this frame's click moves it.
 
     if loading {
         table_skeleton(*tbl, 18);
@@ -230,9 +239,15 @@ draw_transactions_page :: (r_in: Rect) {
                 draw_day_header(*tbl, row, row_data);
                 continue;
             }
+            if row_data.picked {
+                mark := snap(rect(row.x, row.y, tbl.body.w, row.h - hairline()));
+                draw_rect(mark, theme.accent_wash);
+                draw_rect(snap(rect(mark.x, mark.y, px(2), mark.h)), theme.accent);
+            }
             draw_txn_row(*tbl, row, row_data.txn);
         }
         table_end(*tbl);
+        if tbl.clicked >= 0 && !st.rows[tbl.clicked].header pick_on_click(st, tbl.clicked, cursor);
     } else if loading {
         table_end(*tbl);
     }
@@ -240,15 +255,75 @@ draw_transactions_page :: (r_in: Rect) {
 
     if inspector_w > 1 {
         push_opacity(st.inspector_t);
-        if draw_inspector(inspector_area, *st.inspector, selected_txn) {
+        closed := false;
+        if st.picked.count {
+            picked: [..] s32;
+            picked.allocator = temp;
+            for st.rows if it.picked array_add(*picked, it.txn);
+            closed = draw_bulk_inspector(inspector_area, *st.inspector, picked);
+        } else {
+            closed = draw_inspector(inspector_area, *st.inspector, selected_txn);
+        }
+        if closed {
             st.table.selected = -1;
             set_string(*st.selected_id, "");
+            clear_picked(st);
         }
         pop_opacity();
     }
 }
 
+clear_picked :: (st: *Transactions_State) {
+    for st.picked free(it);
+    st.picked.count = 0;
+    for * st.rows it.picked = false;
+}
+
 #scope_file
+
+// A plain click chooses one transaction; Ctrl+click adds or removes one,
+// starting from the one already chosen; Shift+click chooses the run of rows
+// from the one already chosen.
+pick_on_click :: (st: *Transactions_State, clicked: int, cursor: int) {
+    has_cursor := cursor >= 0 && cursor < st.rows.count && !st.rows[cursor].header;
+    if ctrl_down() {
+        if !st.picked.count && has_cursor set_picked(st, cursor, true);
+        set_picked(st, clicked, !st.rows[clicked].picked);
+    } else if shift_down() && has_cursor {
+        clear_picked(st);
+        for min(cursor, clicked)..max(cursor, clicked) if !st.rows[it].header set_picked(st, it, true);
+        st.table.selected = cursor;   // Further Shift+clicks run from the same row.
+    } else {
+        clear_picked(st);
+        return;
+    }
+    settle_picked(st);
+}
+
+set_picked :: (st: *Transactions_State, row: int, on: bool) {
+    data := *st.rows[row];
+    if data.picked == on return;
+    data.picked = on;
+    id := store.transactions[data.txn].id;
+    if on {
+        array_add(*st.picked, copy_string(id));
+    } else {
+        for st.picked if it == id { free(it); array_unordered_remove_by_index(*st.picked, it_index); break; }
+    }
+}
+
+// One chosen is the ordinary selection, and none is no selection.
+settle_picked :: (st: *Transactions_State) {
+    if st.picked.count >= 2 return;
+    if st.picked.count == 1 {
+        set_string(*st.selected_id, st.picked[0]);
+        for st.rows if it.picked { st.table.selected = it_index; break; }
+    } else {
+        set_string(*st.selected_id, "");
+        st.table.selected = -1;
+    }
+    clear_picked(st);
+}
 
 draw_day_header :: (t: *Data_Table, row: Rect, data: *Txn_Row) {
     draw_rect(snap(rect(row.x, row.y, t.body.w, row.h)), theme.panel_header);
@@ -410,11 +485,31 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         for indices array_add(*st.rows, .{txn = it, day = store.transactions[it].day});
     }
 
+    // Keep the chosen transactions that are still listed.
+    if st.picked.count {
+        chosen := NewArray(store.transactions.count, bool,, temp);
+        for st.picked {
+            index := store_find_transaction(*store, it);
+            if index >= 0 chosen[index] = true;
+            free(it);
+        }
+        st.picked.count = 0;
+        for * st.rows if !it.header && chosen[it.txn] {
+            it.picked = true;
+            array_add(*st.picked, copy_string(store.transactions[it.txn].id));
+        }
+        if !st.picked.count set_string(*st.selected_id, "");
+        else if st.picked.count == 1 {
+            set_string(*st.selected_id, st.picked[0]);
+            clear_picked(st);
+        }
+    }
+
     // Keep the selection on the same transaction.
     st.table.selected = -1;
     if st.selected_id.count {
         for st.rows if !it.header && store.transactions[it.txn].id == st.selected_id { st.table.selected = it_index; break; }
-        if st.table.selected >= 0 {
+        if st.table.selected >= 0 && !st.picked.count {
             row_h := px(theme.row_height);
             ui_scroll_to(*st.table.scroll, st.table.selected * row_h, row_h, max(st.table.scroll.view, row_h * 4));
         }
