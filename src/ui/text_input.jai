@@ -14,11 +14,8 @@ Text_Input_Flags :: enum_flags u8 {
 ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "", flags: Text_Input_Flags = 0, max_length := -1) -> changed: bool, submitted: bool {
     id := ui_id(label);
     w := ui_widget(id);
-    io := ui_interact(id, r);
     focused := ui_focusable(id);
     ui_update_focus(w, id);
-    if io.hovered ui.cursor = .TEXT;
-    ui_animate(*w.hover, ifx io.hovered then 1.0 else 0.0, 22);
 
     font := ifx flags & .MONO then fonts.mono else fonts.regular;
     size := px(theme.font_size_body);
@@ -34,17 +31,28 @@ ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "
     changed, submitted := false, false;
     text := buffer_string(buffer);
 
-    // The clear button sits inside the field, so check it first.
-    clear_clicked := false;
+    // The clear button sits inside the field, so it must interact before the
+    // field does: whichever is pressed first becomes ui.active and the other
+    // stops responding until release.
+    clear_clicked, clear_hovered := false, false;
     if has_clear {
         cid := ui_id_combine(id, 0xC1EA);
         cw := ui_widget(cid);
         cio := ui_interact(cid, clear_r);
-        if cio.hovered ui.cursor = .HAND;
+        clear_hovered = cio.hovered;
         ui_animate(*cw.hover, ifx cio.hovered then 1.0 else 0.0, 22);
         if cio.clicked clear_clicked = true;
-        if cio.pressed || cio.held { io.pressed = false; io.held = false; }
+        // Pressing the clear button keeps (or gives) the field focus, so you
+        // can type again straight away.
+        if cio.pressed {
+            if !focused { ui_take_focus(id); focused = true; w.t = 1; }
+            ui.focus_claimed = true;
+        }
     }
+
+    io := ui_interact(id, r);
+    if io.hovered || clear_hovered ui.cursor = ifx clear_hovered then .HAND else .TEXT;
+    ui_animate(*w.hover, ifx io.hovered || clear_hovered then 1.0 else 0.0, 22);
 
     if io.pressed {
         if !focused {

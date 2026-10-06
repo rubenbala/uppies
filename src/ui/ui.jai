@@ -545,10 +545,12 @@ ui_toggle :: (label: string, r: Rect, value: *bool, detail := "") -> bool {
     return toggled;
 }
 
-ui_checkbox :: (label: string, r: Rect, value: *bool) -> bool {
+// `mixed` shows a dash instead of a tick: some, but not all, of what it
+// stands for is checked. Clicking it checks the box.
+ui_checkbox :: (label: string, r: Rect, value: *bool, mixed := false) -> bool {
     id := ui_id(label);
     w, is_new := ui_widget(id);
-    if is_new w.t = ifx value.* then 1.0 else 0.0;
+    if is_new w.t = ifx value.* || mixed then 1.0 else 0.0;
     io := ui_interact(id, r);
     ui_focusable(id);
     if io.pressed ui_take_focus(id);
@@ -557,19 +559,27 @@ ui_checkbox :: (label: string, r: Rect, value: *bool) -> bool {
     if toggled value.* = !value.*;
     if io.hovered ui.cursor = .HAND;
     ui_animate(*w.hover, ifx io.hovered then 1.0 else 0.0, 20);
-    ui_animate(*w.t, ifx value.* then 1.0 else 0.0, 26);
+    ui_animate(*w.t, ifx value.* || mixed then 1.0 else 0.0, 26);
 
-    box := snap(rect(r.x, r.y + (r.h - px(14)) * 0.5, px(14), px(14)));
-    fill := color_lerp(color_lerp(theme.raised, theme.hover, w.hover), theme.accent, w.t);
-    draw_rect_outline(box, fill, color_lerp(theme.border_strong, theme.accent, w.t), hairline(), px(2));
-    if w.t > 0.01 {
-        push_opacity(w.t);
-        draw_icon_in(.CHECK, box, px(10), theme.on_accent);
-        pop_opacity();
-    }
+    box := snap(rect(r.x, r.y + (r.h - px(CHECKBOX_SIZE)) * 0.5, px(CHECKBOX_SIZE), px(CHECKBOX_SIZE)));
+    draw_checkbox(box, w.t, w.hover, mixed && !value.*);
     ui_focus_ring(box, w.focus, px(2));
     draw_text_in_rect(fonts.regular, px(theme.font_size_body), rect(box.x + px(22), r.y, r.w - px(22), r.h), display_text(label), theme.text);
     return toggled;
+}
+
+CHECKBOX_SIZE :: 14.0;
+
+// A checkbox's box: t runs from empty (0) to checked (1).
+draw_checkbox :: (box: Rect, t: float, hover: float, mixed := false) {
+    fill := color_lerp(color_lerp(theme.raised, theme.hover, hover), theme.accent, t);
+    draw_rect_outline(box, fill, color_lerp(theme.border_strong, theme.accent, t), hairline(), px(2));
+    if t > 0.01 {
+        push_opacity(t);
+        if mixed draw_rect(snap(rect(box.x + px(3.5), box.y + box.h * 0.5 - px(1), box.w - px(7), px(2))), theme.on_accent, px(1));
+        else draw_icon_in(.CHECK, box, px(10), theme.on_accent);
+        pop_opacity();
+    }
 }
 
 // A labeled horizontal slider filling the row r (label above, track below).

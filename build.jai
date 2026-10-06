@@ -6,7 +6,8 @@
 //
 // Shaders are compiled here, at build time, and their bytecode is embedded
 // in the executable: no shader compiler ships with the app, startup never
-// waits on compilation, and a shader error is a build error.
+// waits on compilation, and a shader error is a build error. The icon is
+// embedded the same way, from assets/icon.png.
 
 #import "Basic";
 #import "Compiler";
@@ -16,12 +17,14 @@
 #import "Process";
 #if OS == .WINDOWS {
     Windows_Resources :: #import "Windows_Resources";
+    Ico_File          :: #import "Ico_File";
     #import "Windows";
     #import "d3d_compiler";
 }
 
 OUTPUT_DIR :: "bin";
 EXE_NAME   :: "uppies";
+ICON_FILE  :: "assets/icon.png";
 #if OS == .WINDOWS { EXE_FILE :: "uppies.exe"; }
 else { EXE_FILE :: "uppies"; }
 
@@ -85,6 +88,9 @@ build :: () {
 
     if !success return;
 
+    #if OS == .WINDOWS {
+        if !embed_icon() return;
+    }
     copy_runtime_files();
     print("Built %/% (%)\n", OUTPUT_DIR, EXE_FILE, ifx release then "release" else "debug");
 
@@ -135,6 +141,24 @@ compile_shaders :: () -> string, bool {
         }
     }
     return builder_to_string(*builder), true;
+}
+
+#if OS == .WINDOWS {
+    // The 256 px master is resized to 256/128/48/32/16 and written into the
+    // exe as icon group 1, which the window class loads (platform_windows.jai).
+    embed_icon :: () -> bool {
+        png := tprint("%/%", #filepath, ICON_FILE);
+        ico := Ico_File.create_ico_file_from_bitmap_filename(png);
+        if !ico return false;
+        defer free(ico);
+
+        exe := tprint("%/%/%", #filepath, OUTPUT_DIR, EXE_FILE);
+        if !Windows_Resources.set_icon_by_data(exe, ico, resource_id = 1) {
+            log_error("Could not set the icon of %\n", exe);
+            return false;
+        }
+        return true;
+    }
 }
 
 // Data (fonts, images) lives in data/ at the repo root; mirror it next to the

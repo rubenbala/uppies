@@ -22,6 +22,7 @@ src/up/                      The Up API: model + parsing, store, encrypted store
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
 src/app/                     The console: sync engine, analytics, pages, charts, inspector, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
+assets/icon.png              256 px icon master; build.jai turns it into the exe's icon
 ```
 
 Layering is strictly downward: `app` uses `ui`, `render`, `platform` and `core`; `render`

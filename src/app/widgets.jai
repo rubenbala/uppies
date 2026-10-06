@@ -183,12 +183,16 @@ Data_Table :: struct {
     sort_changed:      bool;
     selection_changed: bool;
     hovered_row: int = -1;
+    highlight:   bool;
 }
 
 CELL_PAD :: 10.0;
 
-table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: *Table_State, row_count: int, keyboard := false, row_height := 0.0, show_header := true) {
+// Without `highlight` the selected row is still the keyboard's position, but
+// isn't marked: the caller marks rows itself (when several can be chosen).
+table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: *Table_State, row_count: int, keyboard := false, row_height := 0.0, show_header := true, highlight := true) {
     t.id = ui_id(label);
+    t.highlight = highlight;
     t.state = state;
     t.rect = r;
     t.cols = cols;
@@ -299,7 +303,7 @@ table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: 
     push_clip(t.body);
 
     // The selection highlight glides between rows (and snaps across long jumps).
-    sel := state.selected;
+    sel := ifx highlight then state.selected else -1;
     if sel >= 0 {
         if abs(state.sel_spring.value - sel) > 12 || state.sel_alpha < 0.01 { state.sel_spring.value = xx sel; state.sel_spring.velocity = 0; }
         ui_spring(*state.sel_spring, xx sel, 900, 0.9);
@@ -320,7 +324,7 @@ table_row :: (t: *Data_Table, i: int) -> Rect {
     io := ui_interact(rid, rect(row.x, row.y, t.body.w, row.h));
     if io.hovered {
         t.hovered_row = i;
-        if t.state.selected != i draw_rect(snap(rect(row.x, row.y, t.body.w, row.h)), color_with_alpha(theme.hover, 0.55));
+        if t.state.selected != i || !t.highlight draw_rect(snap(rect(row.x, row.y, t.body.w, row.h)), color_with_alpha(theme.hover, 0.55));
     }
     if io.pressed {
         if t.state.selected != i { t.state.selected = i; t.selection_changed = true; }

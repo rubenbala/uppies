@@ -11,7 +11,7 @@ Pages sit in a tab bar along the top (there is no sidebar):
 |--------------|-------------------------------------------------------------------------|
 | Overview     | Where do I stand? Net position, balances with 30-day trends, cash flow, this month's spending, recent activity, and what needs attention (holds, uncategorised purchases, sync problems). |
 | Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags. |
-| Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. |
+| Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Tick several accounts (or Ctrl+click) to see them added together. |
 | Spending     | Where the money goes: categories grouped by parent with comparisons, 12-month stacked chart, top merchants. |
 | Tags         | What each tag cost, by category and by month.                           |
 | Webhooks     | Create, ping and delete webhooks; delivery health and logs with payloads. |

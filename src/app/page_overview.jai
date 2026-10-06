@@ -133,10 +133,7 @@ draw_accounts_panel :: (r: Rect, st: *Overview_State) {
         draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 4), format_money(account.balance), theme.text, .RIGHT, .{tabular = true});
     }
     table_end(*tbl);
-    if tbl.clicked >= 0 {
-        app.accounts.selected = order[tbl.clicked];
-        select_page(.ACCOUNTS);
-    }
+    if tbl.clicked >= 0 show_account(order[tbl.clicked]);
 }
 
 draw_net_position_panel :: (r: Rect) {
