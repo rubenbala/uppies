@@ -282,6 +282,7 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
             if picked >= 0 && picked < map.count && map[picked] != -3 {
                 category := map[picked];
                 moved := 0;
+                sync_batch_begin();
                 for indices {
                     t := *store.transactions[it];
                     if !t.categorizable || t.category == category continue;
@@ -292,7 +293,7 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
                 message := ifx category >= 0 then tprint("Moved % to %.", format_count(moved, "transaction", "transactions"), name)
                            else tprint("Took % out of their categories.", format_count(moved, "transaction", "transactions"));
                 if uncategorizable message = tprint("% % skipped: not categorisable.", message, uncategorizable);
-                app_toast(.SUCCESS, message);
+                sync_batch_end(message, ifx category >= 0 then tprint("Not all moved to %", name) else "Not all taken out of their categories");
             }
         }
         y += px(30);
@@ -323,8 +324,9 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     if to_remove >= 0 {
         label := copy_string(store.tags[to_remove].label,, temp);
         removed := 0;
+        sync_batch_begin();
         for indices if txn_has_tag(*store.transactions[it], to_remove) { sync_remove_tag(it, to_remove); removed += 1; }
-        app_toast(.SUCCESS, tprint("Removed \"%\" from %.", label, format_count(removed, "transaction", "transactions")));
+        sync_batch_end(tprint("Removed \"%\" from %.", label, format_count(removed, "transaction", "transactions")), tprint("\"%\" not removed from all", label));
     }
 
     add_r := rect(x, y, w, px(30));
@@ -345,6 +347,7 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
         adding = copy_string(adding,, temp);
         tag := store_find_tag(*store, adding);
         added, had, skipped := 0, 0, 0;
+        sync_batch_begin();
         for indices {
             t := *store.transactions[it];
             if tag >= 0 && txn_has_tag(t, tag) { had += 1; continue; }
@@ -355,7 +358,8 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
         message := tprint("Added \"%\" to %.", adding, format_count(added, "transaction", "transactions"));
         if had     message = tprint("% % already had it.", message, had);
         if skipped message = tprint("% % skipped: no room for more tags.", message, skipped);
-        app_toast(ifx added || had then Toast_Kind.SUCCESS else .ERROR, message);
+        if !added && !had { app_toast(.ERROR, message); message = ""; }   // Nothing to wait for.
+        sync_batch_end(message, tprint("\"%\" not added to all", adding));
         st.bulk_tag_input.count = 0;
     }
 

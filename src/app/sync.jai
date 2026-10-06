@@ -88,6 +88,23 @@ Sync :: struct {
     webhook_busy:   int;
 
     pending_writes: int;
+
+    // Writes made together (to several transactions at once) report in one
+    // toast, once the last of them is answered.
+    batches:    [..] Write_Batch;
+    batch_open: u32;   // Writes submitted now join this batch.
+    batch_next: u32;
+}
+
+Write_Batch :: struct {
+    id:      u32;
+    total:   int;
+    pending: int;
+    failed:  int;
+    closed:  bool;     // Every write has been submitted.
+    done:    string;   // Heap: the toast when they all succeed.
+    failure: string;   // Heap: how the toast starts when some fail.
+    error:   string;   // Heap: why the first one failed.
 }
 
 sync: Sync;
@@ -211,7 +228,7 @@ sync_set_category :: (txn_index: s32, category: s32) {
     store_set_category(*store, txn_index, category);
     note_edit(t.id);
     sync.pending_writes += 1;
-    api_submit(.SET_CATEGORY, "PATCH", tprint("/transactions/%/relationships/category", t.id), body, ref = t.id, arg = ifx previous >= 0 then store.categories[previous].id else "", arg_int = category, urgent = true);
+    api_submit(.SET_CATEGORY, "PATCH", tprint("/transactions/%/relationships/category", t.id), body, ref = t.id, arg = ifx previous >= 0 then store.categories[previous].id else "", arg_int = category, urgent = true, batch = join_batch());
 }
 
 sync_add_tag :: (txn_index: s32, label: string) {
@@ -224,7 +241,7 @@ sync_add_tag :: (txn_index: s32, label: string) {
     note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
-    api_submit(.ADD_TAG, "POST", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true);
+    api_submit(.ADD_TAG, "POST", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true, batch = join_batch());
 }
 
 sync_remove_tag :: (txn_index: s32, tag: s32) {
@@ -235,7 +252,27 @@ sync_remove_tag :: (txn_index: s32, tag: s32) {
     note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
-    api_submit(.REMOVE_TAG, "DELETE", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true);
+    api_submit(.REMOVE_TAG, "DELETE", tprint("/transactions/%/relationships/tags", t.id), body, ref = t.id, arg = label, urgent = true, batch = join_batch());
+}
+
+// Groups the writes made until sync_batch_end into one toast, shown when the
+// last of them is answered: `done` when they all succeed, otherwise `failure`
+// with how many failed and why. (On their own, writes only report failures.)
+sync_batch_begin :: () {
+    sync.batch_next += 1;
+    b := array_add(*sync.batches);
+    b.id = sync.batch_next;
+    sync.batch_open = b.id;
+}
+
+sync_batch_end :: (done: string, failure: string) {
+    b, index := find_batch(sync.batch_open);
+    sync.batch_open = 0;
+    if !b return;
+    b.closed = true;
+    b.done = copy_string(done);
+    b.failure = copy_string(failure);
+    finish_batch(index);
 }
 
 sync_open_attachment :: (id: string) {
@@ -678,25 +715,28 @@ handle_reply :: (req: *Api_Request) {
 
         case .SET_CATEGORY;
             sync.pending_writes -= 1;
-            if ok return;
-            // Put it back.
-            index := store_find_transaction(*store, req.ref);
-            if index >= 0 store_set_category(*store, index, store_find_category(*store, req.arg));
-            app_toast(.ERROR, tprint("Category not changed: %", api_error_message(req)));
+            if !ok {
+                // Put it back.
+                index := store_find_transaction(*store, req.ref);
+                if index >= 0 store_set_category(*store, index, store_find_category(*store, req.arg));
+            }
+            if !batch_reply(req, ok) && !ok app_toast(.ERROR, tprint("Category not changed: %", api_error_message(req)));
 
         case .ADD_TAG;
             sync.pending_writes -= 1;
-            if ok return;
-            index := store_find_transaction(*store, req.ref);
-            if index >= 0 store_remove_tag(*store, index, store_find_tag(*store, req.arg));
-            app_toast(.ERROR, tprint("Tag not added: %", api_error_message(req)));
+            if !ok {
+                index := store_find_transaction(*store, req.ref);
+                if index >= 0 store_remove_tag(*store, index, store_find_tag(*store, req.arg));
+            }
+            if !batch_reply(req, ok) && !ok app_toast(.ERROR, tprint("Tag not added: %", api_error_message(req)));
 
         case .REMOVE_TAG;
             sync.pending_writes -= 1;
-            if ok return;
-            index := store_find_transaction(*store, req.ref);
-            if index >= 0 store_add_tag(*store, index, store_find_tag(*store, req.arg));
-            app_toast(.ERROR, tprint("Tag not removed: %", api_error_message(req)));
+            if !ok {
+                index := store_find_transaction(*store, req.ref);
+                if index >= 0 store_add_tag(*store, index, store_find_tag(*store, req.arg));
+            }
+            if !batch_reply(req, ok) && !ok app_toast(.ERROR, tprint("Tag not removed: %", api_error_message(req)));
 
         case .ATTACHMENT;
             if !ok { app_toast(.ERROR, tprint("Attachment unavailable: %", api_error_message(req))); return; }
@@ -814,4 +854,43 @@ refresh_failed :: (req: *Api_Request) {
     // Try again on the next automatic refresh, or sooner when it was transient.
     if transient(req) sync.next_auto = ui.time + 30;
     if sync.refresh_manual app_toast(.ERROR, tprint("Refresh failed: %", message));
+}
+
+// The open batch, counting one more write in it (0 when none is open).
+join_batch :: () -> u32 {
+    b := find_batch(sync.batch_open);
+    if !b return 0;
+    b.total += 1;
+    b.pending += 1;
+    return b.id;
+}
+
+find_batch :: (id: u32) -> *Write_Batch, int {
+    if !id return null, -1;
+    for * sync.batches if it.id == id return it, it_index;
+    return null, -1;
+}
+
+// Counts a write's reply against its batch; false when it has none.
+batch_reply :: (req: *Api_Request, ok: bool) -> bool {
+    if !req.batch return false;
+    b, index := find_batch(req.batch);
+    if !b return true;
+    b.pending -= 1;
+    if !ok {
+        b.failed += 1;
+        if !b.error.count b.error = copy_string(api_error_message(req));
+    }
+    finish_batch(index);
+    return true;
+}
+
+// Once every write is submitted and answered: the one toast.
+finish_batch :: (index: int) {
+    b := *sync.batches[index];
+    if !b.closed || b.pending > 0 return;
+    if b.failed app_toast(.ERROR, tprint("%: % of % failed. %", b.failure, b.failed, b.total, b.error));
+    else if b.done.count app_toast(.SUCCESS, b.done);
+    free(b.done); free(b.failure); free(b.error);
+    array_ordered_remove_by_index(*sync.batches, index);
 }

@@ -46,6 +46,7 @@ Api_Request :: struct {
     arg:          string; // Category id, tag label...
     arg_int:      s64;
     window_since: s64 = -1;
+    batch:        u32;    // Writes made together report as one (0: on its own).
 
     // Filled in by the worker.
     result:     Http_Result;
@@ -88,7 +89,7 @@ api_is_demo :: () -> bool { return api.demo; }
 
 // Builds and queues a request. `path` is relative to API_PREFIX, or an
 // absolute https://api.up.com.au URL (the API's paging links).
-api_submit :: (kind: Api_Kind, method: string, path: string, body := "", generation: u32 = 0, ref := "", arg := "", arg_int: s64 = 0, window_since: s64 = -1, urgent := false) {
+api_submit :: (kind: Api_Kind, method: string, path: string, body := "", generation: u32 = 0, ref := "", arg := "", arg_int: s64 = 0, window_since: s64 = -1, urgent := false, batch: u32 = 0) {
     req := New(Api_Request);
     req.kind = kind;
     req.method = copy_string(method);
@@ -105,6 +106,7 @@ api_submit :: (kind: Api_Kind, method: string, path: string, body := "", generat
     req.arg = copy_string(arg);
     req.arg_int = arg_int;
     req.window_since = window_since;
+    req.batch = batch;
 
     lock(*api.mutex);
     if urgent array_insert_at(*api.pending, req, 0);
