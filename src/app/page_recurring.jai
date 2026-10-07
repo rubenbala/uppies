@@ -22,7 +22,13 @@ RECURRING_FILTERS :: string.["All", "Subscriptions", "Bills", "Income"];
 
 // Shows the Recurring page with this series chosen.
 show_recurring :: (id: u64) {
-    st := *app.recurring_page;
+    choose_series(*app.recurring_page, id);
+    select_page(.RECURRING);
+}
+
+// Chooses a series, widening the table's filters when they leave it out
+// (back to All from Subscriptions, say), so the table can show it chosen.
+choose_series :: (st: *Recurring_Page_State, id: u64) {
     st.selected = id;
     s := recurring_find(id);
     if s >= 0 {
@@ -32,7 +38,6 @@ show_recurring :: (id: u64) {
         if series.hidden st.show_hidden = true;
     }
     st.rows_key = 0;
-    select_page(.RECURRING);
 }
 
 recurring_kind_color :: (kind: Recurring_Kind) -> Color {
@@ -302,10 +307,7 @@ draw_upcoming :: (r: Rect, st: *Recurring_Page_State, due: [] s32) {
         else draw_amount(amount_r, s.amount);
     }
     table_end(*tbl);
-    if tbl.clicked >= 0 {
-        st.selected = recurring.series[due[tbl.clicked]].id;
-        st.rows_key = 0;
-    }
+    if tbl.clicked >= 0 choose_series(st, recurring.series[due[tbl.clicked]].id);
 }
 
 CHARGE_COLUMNS :: Column.[
