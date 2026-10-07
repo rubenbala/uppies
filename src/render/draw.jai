@@ -17,7 +17,7 @@ Draw_Kind :: enum u32 {
     AREA   :: 4;   // Column with a sloped top edge down to a baseline (area charts).
 }
 
-// Keep in sync with Instance in src/render/d3d11/ui.hlsl.
+// Keep in sync with Instance in src/render/d3d11/ui.hlsl and src/render/metal/ui.metal.
 Draw_Instance :: struct {
     rect:         [4] float;   // x0 y0 x1 y1
     uv:           [4] float;   // Glyph: atlas texel rect. Line: endpoints. Area: top y at x0, x1.

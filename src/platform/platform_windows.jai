@@ -238,10 +238,6 @@ platform_random_bytes :: (out: [] u8) -> bool {
     return BCryptGenRandom(null, out.data, cast(u32) out.count, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 }
 
-AES_KEY_SIZE   :: 32;   // AES-256.
-AES_NONCE_SIZE :: 12;   // The GCM standard nonce.
-AES_TAG_SIZE   :: 16;
-
 // AES-256-GCM (Windows CNG). `aad` is authenticated but not encrypted.
 // Returns the ciphertext (same length as plain, heap) and the tag.
 platform_aes_gcm_encrypt :: (key: [] u8, nonce: [] u8, aad: [] u8, plain: [] u8) -> cipher: [] u8, tag: [AES_TAG_SIZE] u8, ok: bool {

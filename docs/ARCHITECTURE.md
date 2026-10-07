@@ -3,22 +3,25 @@
 ## Layout
 
 ```
-build.jai                    Build metaprogram (debug / release / run); compiles HLSL to bytecode
+build.jai                    Build metaprogram (debug / release / run); compiles HLSL / Metal shaders
 src/main.jai                 Entry point, frame loop, frame clock
 src/core/                    Rects and rect cutting, sRGB colors, damping, springs, easing
 src/platform/                Window, input, cursor, OS services
     platform.jai             The platform API + shared input state (OS independent)
     platform_windows.jai     Win32 implementation
+    platform_macos.jai       Cocoa implementation
 src/render/                  Everything that turns a frame into pixels
     draw.jai                 The draw list: one 96-byte instance per primitive
     font.jai                 FreeType glyph cache + shelf-packed atlas
     renderer.jai             Backend interface, stats, settings
     d3d11/                   Direct3D 11 backend + its shader (ui.hlsl)
+    metal/                   Metal backend + its shader (ui.metal, a port of ui.hlsl)
 src/core/json.jai            JSON parser (tree) and string escaping
 src/core/pdf.jai             PDF writer: pages of text, lines, rectangles and paths in the standard fonts
 src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
 src/core/format.jai          Money (integer cents) and number formatting
 src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
+src/net/http_macos.jai       Not yet: every request fails, so macOS runs on sample data
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
 src/app/                     The console: sync engine, analytics, pages, charts, inspector, printing, test scripts
@@ -84,6 +87,18 @@ redirection surface (`WS_EX_NOREDIRECTIONBITMAP`). The first frame is rendered b
 window is shown, so it never flashes white. A lost device (driver update, TDR) is
 recreated from CPU-side state.
 
+**Metal (macOS)** draws the same instances with the same shading (`metal/ui.metal` is a port of
+`ui.hlsl`; the instance buffer is read by `instance_id`, so there is no vertex descriptor). The
+drawable is acquired in `renderer_wait_for_frame`: with vsync, the layer has two drawables, so
+`nextDrawable` blocks until the display has released one, the counterpart of the frame latency
+waitable. Without vsync, `displaySyncEnabled` is off and a third drawable keeps frames coming
+(uncapped). During a live resize, frames present inside the Core Animation transaction that
+resizes the layer (`presentsWithTransaction`), so content never lags the window edge. Instance
+buffers are a ring of three, one per frame the GPU may still be reading. `build.jai` compiles
+`ui.metal` with Xcode's `metal` and `metallib` and embeds the library; this needs the Metal
+Toolchain component once (`xcodebuild -downloadComponent MetalToolchain`). The executable is
+linked with Apple's `ld`, since Jai's bundled lld can't read the macOS 27 SDK's library stubs.
+
 Why D3D11 and not D3D12: D3D12's advantages are cheap submission of many draws and explicit
 multithreading. At one draw per frame neither applies, while presentation, which does
 matter, is identical (same DXGI). The backend sits behind a five-procedure interface
@@ -118,12 +133,26 @@ and fade whole groups (page transitions, scrolling).
 
 `platform.jai` declares the API and owns the OS-independent input state; each OS implements
 it in its own file, chosen with `#if OS`. Keys use Windows virtual-key values as the shared
-`Key` enum; other platforms translate to them. To add macOS or Linux:
+`Key` enum; other platforms translate to them.
 
-1. `src/platform/platform_macos.jai` / `platform_linux.jai`: window, event pump, wait for
-   events, DPI scale, cursor; `#load` it in `platform.jai`.
-2. `src/render/metal/` or `src/render/vulkan/`: the five renderer procedures and a port of
-   `ui.hlsl` (the instance layout and shading model stay the same); `#load` in `renderer.jai`.
+**macOS** (`platform_macos.jai`): an `NSWindow` whose content view (an `NSView` subclass defined
+from Jai with the Objective-C runtime) is backed by the `CAMetalLayer` the Metal backend draws
+into. Sizes are points times `backingScaleFactor` (`platform.dpi_scale`, 2 on Retina). The
+main loop sleeps in `nextEventMatchingMask`; `platform_wake` posts an application-defined
+event. AppKit's live resize runs inside `sendEvent`, like Win32's modal loop, and
+`windowDidResize:` draws through `platform.modal_frame` meanwhile. Command and Control both
+drive `Key.CONTROL`, so the Ctrl shortcuts are the Command shortcuts Mac users expect. Not yet
+on macOS: HTTPS, Keychain storage for the token, AES-GCM for the store file (those report
+failure, so nothing secret is written), and the icon font. `jai build.jai - release bundle`
+also makes `bin/Uppies.app`: the executable, `data/` in `Contents/Resources` (found through
+`resource_dir`), an `.icns` made from `assets/icon.png`, an `Info.plist`, and an ad-hoc signature.
+
+To add Linux:
+
+1. `src/platform/platform_linux.jai`: window, event pump, wait for events, DPI scale, cursor;
+   `#load` it in `platform.jai`.
+2. `src/render/vulkan/`: the five renderer procedures and a port of `ui.hlsl` (the instance
+   layout and shading model stay the same); `#load` in `renderer.jai`.
 3. Font candidate paths for the platform's UI font in `ui/theme.jai`.
 4. Shader compilation for that backend in `build.jai`.
 

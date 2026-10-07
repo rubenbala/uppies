@@ -72,6 +72,18 @@ jai build.jai - release       # optimized, no console window
 jai build.jai - run           # build, then launch
 ```
 
+**macOS (early, sample data only).** The same commands build `bin/uppies` with a Metal
+renderer, on Apple silicon with macOS 13 or newer. It needs Xcode and, once, its Metal
+Toolchain (`xcodebuild -downloadComponent MetalToolchain`). Networking, saving the token and
+the encrypted local copy aren't done on macOS yet, so run it with `-demo`.
+
+```bash
+jai build.jai - release bundle   # macOS: also make bin/Uppies.app (icon, Info.plist, ad-hoc signed)
+```
+
+The bundle runs on the Mac that built it. Giving it to others needs a Developer ID signature and
+notarization.
+
 Command-line options, mostly for testing:
 
 | Option                 | Effect                                                            |

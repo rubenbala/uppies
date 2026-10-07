@@ -28,12 +28,13 @@ draw_settings_page :: (r_in: Rect) {
     display_r := cut_top(*right, px(208));
     cut_top(*right, gap);
     // On a short window About sets its logo beside the name, so Diagnostics keeps room for its
-    // readouts; shorter still, Diagnostics gives way and About takes the column.
+    // readouts and frame graph; shorter still, the graph goes, then Diagnostics gives way and
+    // About takes the column.
     disclaimer := disclaimer_lines(right.w);
     stacked_h := about_panel_height(disclaimer.count, false);
     room := right.h - gap - px(DIAGNOSTICS_MIN_HEIGHT);
     show_diagnostics := room >= about_panel_height(disclaimer.count, true);
-    about_compact := ifx show_diagnostics then room < stacked_h else right.h < stacked_h;
+    about_compact := ifx show_diagnostics then room - px(DIAGNOSTICS_GRAPH_HEIGHT) < stacked_h else right.h < stacked_h;
     about_r := right;
     if show_diagnostics {
         about_r = cut_bottom(*right, about_panel_height(disclaimer.count, about_compact));
@@ -242,7 +243,9 @@ draw_diagnostics_panel :: (r: Rect) {
     // Idle frames aren't drawn at all, so a quiet UI shows a short history.
     history := inner;
     cut_top(*history, max(left.y, right.y) - inner.y + px(14));
-    if history.h < px(90) return;
+    // The graph shrinks to the room left (a Mac screen is shorter than the
+    // window the app asks for); below a readable height it's left out.
+    if history.h < px(GRAPH_MIN_HEIGHT) return;
     draw_caps(cut_top(*history, px(18)), "CPU per frame · last 90 frames", theme.text_muted);
     graph := rect(history.x + px(40), history.y + px(4), history.w - px(40), min(history.h - px(10), px(120)));
     n := app.cpu_ms.count;
@@ -250,9 +253,12 @@ draw_diagnostics_panel :: (r: Rect) {
     for app.cpu_ms peak = max(peak, it);
     peak = ceil(peak);
     ui_divider(graph.x, graph.y + graph.h, graph.w, theme.border_strong);
+    // A gridline every `step` ms, as many as fit without their labels touching.
+    step := ifx peak > 6 then 2 else 1;
+    while graph.h * step / peak < px(16) step *= 2;
     for tick: 1..cast(int) peak {
         y := graph.y + graph.h - graph.h * tick / peak;
-        if peak > 6 && tick % 2 != 0 continue;
+        if tick % step != 0 continue;
         ui_divider(graph.x, y, graph.w, theme.grid);
         draw_text_in_rect(fonts.mono, px(theme.font_size_small), rect(history.x, y - px(8), px(34), px(16)), tprint("% ms", tick), theme.text_muted, .RIGHT);
     }
@@ -272,6 +278,8 @@ disclaimer_lines :: (panel_w: float) -> [] string {
 }
 
 DIAGNOSTICS_MIN_HEIGHT :: 214.0;   // Header and the six readout rows.
+GRAPH_MIN_HEIGHT :: 56.0;          // The graph's caption and 28 units of bars.
+DIAGNOSTICS_GRAPH_HEIGHT :: 14 + GRAPH_MIN_HEIGHT;   // The graph below the readouts, at its smallest.
 ABOUT_MARK :: 44.0;
 ABOUT_TITLE :: 20.0;
 ABOUT_HERO_STACKED :: 16 + ABOUT_MARK + 10 + 26 + 20;   // Logo above the name and byline.

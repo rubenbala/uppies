@@ -122,8 +122,10 @@ selftest :: () -> int {
     check(protected && cipher != secret, "token encrypts");
     plain, unprotected := platform_unprotect(cipher);
     check(unprotected && plain == secret, "token decrypts");
-    _, tampered := platform_unprotect(slice(cipher, 0, cipher.count - 1));
-    check(!tampered, "tampered ciphertext is rejected");
+    if protected {
+        _, tampered := platform_unprotect(slice(cipher, 0, cipher.count - 1));
+        check(!tampered, "tampered ciphertext is rejected");
+    }
     check(mask_token(secret) == tprint("up:yeah:%2%1", "6789", "••••••••"), tprint("token masking: %", mask_token(secret)));
 
     // The local store file. First AES-256-GCM itself, against NIST's test

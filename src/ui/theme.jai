@@ -91,6 +91,19 @@ fonts: Fonts;
     FONT_ICON_CANDIDATES     :: string.["C:/Windows/Fonts/segmdl2.ttf", "C:/Windows/Fonts/SegoeIcons.ttf"];
     FONT_NUMERIC_CANDIDATES  :: string.["data/fonts/ui-numeric.ttf",  "C:/Windows/Fonts/bahnschrift.ttf", "C:/Windows/Fonts/seguisb.ttf"];
     FONT_FALLBACK_CANDIDATES :: string.["C:/Windows/Fonts/seguisym.ttf", "C:/Windows/Fonts/seguiemj.ttf"];
+} else #if OS == .MACOS {
+    // SF Pro is a variable font; FreeType gives its default instance, so
+    // every weight is Regular until named instances are selected. Fonts in
+    // data/fonts/ give real weights.
+    FONT_REGULAR_CANDIDATES  :: string.["data/fonts/ui-regular.ttf",  "/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc"];
+    FONT_SEMIBOLD_CANDIDATES :: string.["data/fonts/ui-semibold.ttf", "/System/Library/Fonts/SFNS.ttf"];
+    FONT_LIGHT_CANDIDATES    :: string.["data/fonts/ui-light.ttf",    "/System/Library/Fonts/SFNS.ttf"];
+    FONT_MONO_CANDIDATES     :: string.["data/fonts/ui-mono.ttf",     "/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc"];
+    // The UI's icons are Segoe MDL2 code points, which no macOS font has:
+    // icons are left out until an icon font ships in data/fonts/.
+    FONT_ICON_CANDIDATES     :: string.["data/fonts/ui-icons.ttf"];
+    FONT_NUMERIC_CANDIDATES  :: string.["data/fonts/ui-numeric.ttf",  "/System/Library/Fonts/SFNS.ttf"];
+    FONT_FALLBACK_CANDIDATES :: string.["/System/Library/Fonts/Apple Symbols.ttf"];
 }
 
 theme_load_fonts :: () -> bool {

@@ -4,8 +4,8 @@
 //
 // Everything OS-specific lives behind this file. The rest of the app only
 // sees `platform` and `input` and the procedures declared here; each OS
-// provides them in its own file (platform_windows.jai; later
-// platform_macos.jai and platform_linux.jai).
+// provides them in its own file (platform_windows.jai, platform_macos.jai;
+// later platform_linux.jai).
 //
 // All positions and sizes here are physical pixels. `platform.dpi_scale` is
 // the monitor's scale (1 at 96 DPI, 1.5 at 144 DPI...); the UI multiplies its
@@ -168,8 +168,15 @@ input_release_all :: () {
     for input.mouse_down if it input_on_mouse_button(xx it_index, false);
 }
 
+// The local store's encryption (platform_aes_gcm_encrypt/decrypt).
+AES_KEY_SIZE   :: 32;   // AES-256.
+AES_NONCE_SIZE :: 12;   // The GCM standard nonce.
+AES_TAG_SIZE   :: 16;
+
 #if OS == .WINDOWS {
     #load "platform_windows.jai";
+} else #if OS == .MACOS {
+    #load "platform_macos.jai";
 } else {
-    #assert false "Uppies currently runs on Windows only; macOS and Linux platform layers come next.";
+    #assert false "Uppies runs on Windows and macOS; a Linux platform layer comes next.";
 }

@@ -1,13 +1,17 @@
 // Build metaprogram for Uppies.
 //
-//     jai build.jai                 debug build   -> bin/uppies.exe
+//     jai build.jai                 debug build   -> bin/uppies.exe (bin/uppies on macOS)
 //     jai build.jai - release       optimized build (no console window)
 //     jai build.jai - run           build, then launch the app
+//     jai build.jai - release bundle  macOS: also make bin/Uppies.app
 //
 // Shaders are compiled here, at build time, and their bytecode is embedded
 // in the executable: no shader compiler ships with the app, startup never
 // waits on compilation, and a shader error is a build error. The icon is
-// embedded the same way, from assets/icon.png.
+// embedded the same way, from assets/icon.png (Windows only, for now).
+//
+// macOS compiles Metal shaders with Xcode's `metal` and `metallib`, from the
+// Metal Toolchain component (once: xcodebuild -downloadComponent MetalToolchain).
 
 #import "Basic";
 #import "Compiler";
@@ -33,11 +37,18 @@ build :: () {
 
     release := false;
     run     := false;
+    bundle  := false;
     for get_build_options().compile_time_command_line {
         if it == {
             case "release"; release = true;
             case "run";     run = true;
-            case; log_error("Unknown build argument '%'. Valid: release, run\n", it);
+            case "bundle";
+                #if OS != .MACOS {
+                    log_error("'bundle' makes a macOS app bundle; build on macOS for it.\n");
+                    return;
+                }
+                bundle = true;
+            case; log_error("Unknown build argument '%'. Valid: release, run, bundle\n", it);
         }
     }
 
@@ -58,6 +69,7 @@ build :: () {
     options.output_path            = OUTPUT_DIR;
     options.intermediate_path      = ".build";
     set_optimization(*options, ifx release then .VERY_OPTIMIZED else .DEBUG);
+    #if OS == .MACOS options.use_custom_link_command = true;   // See link_macos.
     set_build_options(options, w);
 
     #if OS == .WINDOWS {
@@ -78,6 +90,11 @@ build :: () {
             case .PHASE;
                 phase := cast(*Message_Phase) message;
                 if phase.phase == .POST_WRITE_EXECUTABLE && phase.executable_write_failed  success = false;
+                #if OS == .MACOS {
+                    if phase.phase == .READY_FOR_CUSTOM_LINK_COMMAND {
+                        if !link_macos(w, phase) success = false;
+                    }
+                }
             case .COMPLETE;
                 complete := cast(*Message_Complete) message;
                 if complete.error_code != .NONE  success = false;
@@ -94,9 +111,18 @@ build :: () {
     copy_runtime_files();
     print("Built %/% (%)\n", OUTPUT_DIR, EXE_FILE, ifx release then "release" else "debug");
 
+    exe := tprint("%/%/%", #filepath, OUTPUT_DIR, EXE_FILE);
+    #if OS == .MACOS {
+        if bundle {
+            app, ok := make_app_bundle();
+            if !ok return;
+            print("Bundled %/%\n", OUTPUT_DIR, APP_BUNDLE);
+            exe = tprint("%/Contents/MacOS/%", app, EXE_FILE);
+        }
+    }
+
     if run {
-        exe := tprint("%/%/%", #filepath, OUTPUT_DIR, EXE_FILE);
-        run_command(exe, working_directory = tprint("%/%", #filepath, OUTPUT_DIR), capture_and_return_output = false);
+        run_command(exe, working_directory = path_strip_filename(exe), capture_and_return_output = false);
     }
 }
 
@@ -116,8 +142,42 @@ Shader_Entry :: struct {
     ];
 }
 
+#if OS == .MACOS {
+    MACOS_MIN_VERSION :: "13.0";
+
+    METAL_SHADERS :: Shader_Entry.[
+        // One library holds every function; entry and target are unused.
+        .{"shader_ui_metallib", "src/render/metal/ui.metal", "", ""},
+    ];
+}
+
 compile_shaders :: () -> string, bool {
     builder: String_Builder;
+    #if OS == .MACOS {
+        developer_dir := find_developer_dir();
+        intermediate := tprint("%/.build", #filepath);
+        make_directory_if_it_does_not_exist(intermediate, recursive = true);
+        for METAL_SHADERS {
+            path := tprint("%/%", #filepath, it.file);
+            air  := tprint("%/%.air", intermediate, it.name);
+            lib  := tprint("%/%.metallib", intermediate, it.name);
+            env  := tprint("DEVELOPER_DIR=%", developer_dir);
+            if !run_tool("/usr/bin/env", env, "xcrun", "-sdk", "macosx", "metal", "-std=metal3.0", "-O3", "-Werror", tprint("-mmacosx-version-min=%", MACOS_MIN_VERSION), "-c", path, "-o", air) {
+                log_error("Shader compilation failed (%). If the Metal Toolchain is missing, run:\n    xcodebuild -downloadComponent MetalToolchain\n", it.file);
+                return "", false;
+            }
+            if !run_tool("/usr/bin/env", env, "xcrun", "-sdk", "macosx", "metallib", air, "-o", lib) {
+                log_error("metallib failed (%).\n", it.file);
+                return "", false;
+            }
+            bytes, ok := read_entire_file(lib);
+            if !ok {
+                log_error("Could not read %\n", lib);
+                return "", false;
+            }
+            append_byte_array(*builder, it.name, cast([] u8) bytes);
+        }
+    }
     #if OS == .WINDOWS {
         for SHADERS {
             path := tprint("%/%", #filepath, it.file);
@@ -132,15 +192,161 @@ compile_shaders :: () -> string, bool {
                 log_error("Shader compilation failed (% %):\n%\n", it.file, it.entry, errors);
                 return "", false;
             }
-            print_to_builder(*builder, "% := u8.[", it.name);
-            for byte, index: cast([] u8) bytecode {
-                if index % 32 == 0  append(*builder, "\n    ");
-                print_to_builder(*builder, "%,", byte);
-            }
-            append(*builder, "\n];\n");
+            append_byte_array(*builder, it.name, cast([] u8) bytecode);
         }
     }
     return builder_to_string(*builder), true;
+}
+
+append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
+    print_to_builder(builder, "% := u8.[", name);
+    for bytes {
+        if it_index % 32 == 0  append(builder, "\n    ");
+        print_to_builder(builder, "%,", it);
+    }
+    append(builder, "\n];\n");
+}
+
+#if OS == .MACOS {
+    // The Xcode that xcode-select names, unless that is only the Command Line
+    // Tools, which have no Metal compiler.
+    find_developer_dir :: () -> string {
+        result, out := run_command("xcode-select", "-p", capture_and_return_output = true);
+        dir := trim(out);
+        if result.exit_code != 0 || !dir || contains(dir, "CommandLineTools") {
+            dir = "/Applications/Xcode.app/Contents/Developer";
+        }
+        return dir;
+    }
+
+    // Jai's bundled lld can't read the .tbd stubs of recent macOS SDKs
+    // (macOS 27 added architectures it doesn't know), so the executable is
+    // linked with Apple's own linker, which always matches the SDK.
+    link_macos :: (w: Workspace, m: *Message_Phase) -> bool {
+        defer compiler_custom_link_command_is_complete(w);
+        options := get_build_options(w);
+        output := tprint("%/%", options.output_path, options.output_executable_name);
+
+        _, sdk := run_command("xcrun", "--sdk", "macosx", "--show-sdk-path", capture_and_return_output = true);
+        _, sdk_version := run_command("xcrun", "--sdk", "macosx", "--show-sdk-version", capture_and_return_output = true);
+        args: [..] string;
+        array_add(*args, "xcrun", "ld", "-arch", "arm64", "-o", output);
+        array_add(*args, "-syslibroot", trim(sdk), "-platform_version", "macos", MACOS_MIN_VERSION, trim(sdk_version));
+        array_add(*args, "-rpath", "@loader_path");
+        for m.compiler_generated_object_files array_add(*args, it);
+        for m.support_object_files            array_add(*args, it);
+        for m.user_libraries                  array_add(*args, it);
+        for m.system_libraries                array_add(*args, it);   // Already flags: -lSystem, -framework Metal...
+        if !run_tool(.. args) {
+            log_error("Link failed: %\n", get_quoted_command_string(args));
+            compiler_set_workspace_status(.FAILED, w);
+            return false;
+        }
+        return true;
+    }
+
+    APP_NAME      :: "Uppies";
+    APP_BUNDLE    :: "Uppies.app";
+    APP_ID        :: "au.net.ruben.uppies";
+    APP_VERSION   :: "1.0";
+    APP_COPYRIGHT :: "© 2026 Ruben Bala";
+
+    // bin/Uppies.app: the executable, data/ as resources, an icon made from
+    // assets/icon.png, an Info.plist, and an ad-hoc signature (enough to run
+    // on this Mac; sharing it needs a Developer ID signature and
+    // notarization).
+    make_app_bundle :: () -> path: string, ok: bool {
+        root := tprint("%/%", #filepath, OUTPUT_DIR);
+        app  := tprint("%/%", root, APP_BUNDLE);
+        if is_directory(app) delete_directory(app);   // Nothing stale from an earlier bundle.
+        macos     := tprint("%/Contents/MacOS", app);
+        resources := tprint("%/Contents/Resources", app);
+        make_directory_if_it_does_not_exist(macos, recursive = true);
+        make_directory_if_it_does_not_exist(resources, recursive = true);
+
+        if !copy_file(tprint("%/%", root, EXE_FILE), tprint("%/%", macos, EXE_FILE)) {
+            log_error("Could not copy the executable into %\n", app);
+            return "", false;
+        }
+        run_command("chmod", "+x", tprint("%/%", macos, EXE_FILE));
+        data := tprint("%/data", #filepath);
+        if is_directory(data) copy_directory(data, tprint("%/data", resources));
+
+        if !make_icns(tprint("%/AppIcon.icns", resources)) return "", false;
+        if !write_entire_file(tprint("%/Contents/Info.plist", app), info_plist()) {
+            log_error("Could not write Info.plist\n");
+            return "", false;
+        }
+        // Signing seals Info.plist and the resources to the executable;
+        // Apple silicon won't run an unsigned app.
+        if !run_tool("codesign", "--force", "--sign", "-", "--timestamp=none", app) {
+            log_error("codesign failed for %\n", app);
+            return "", false;
+        }
+        return app, true;
+    }
+
+    // The 256 px master, resized to every size up to it.
+    make_icns :: (output: string) -> bool {
+        iconset := tprint("%/.build/AppIcon.iconset", #filepath);
+        if is_directory(iconset) delete_directory(iconset);
+        make_directory_if_it_does_not_exist(iconset, recursive = true);
+        png := tprint("%/%", #filepath, ICON_FILE);
+        SIZES :: struct { name: string; px: int; }.[
+            .{"icon_16x16",      16}, .{"icon_16x16@2x",   32},
+            .{"icon_32x32",      32}, .{"icon_32x32@2x",   64},
+            .{"icon_128x128",   128}, .{"icon_128x128@2x", 256},
+            .{"icon_256x256",   256},
+        ];
+        for SIZES {
+            size := tprint("%", it.px);
+            out  := tprint("%/%.png", iconset, it.name);
+            result := run_command("sips", "-z", size, size, png, "--out", out, capture_and_return_output = true);
+            if result.exit_code != 0 {
+                log_error("sips could not make %\n", out);
+                return false;
+            }
+        }
+        if !run_tool("iconutil", "-c", "icns", iconset, "-o", output) {
+            log_error("iconutil could not make %\n", output);
+            return false;
+        }
+        return true;
+    }
+
+    info_plist :: () -> string {
+        return tprint(#string PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>     <string>en</string>
+    <key>CFBundleExecutable</key>            <string>%2</string>
+    <key>CFBundleIconFile</key>              <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>            <string>%3</string>
+    <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
+    <key>CFBundleName</key>                  <string>%1</string>
+    <key>CFBundleDisplayName</key>           <string>%1</string>
+    <key>CFBundlePackageType</key>           <string>APPL</string>
+    <key>CFBundleShortVersionString</key>    <string>%4</string>
+    <key>CFBundleVersion</key>               <string>%4</string>
+    <key>LSApplicationCategoryType</key>     <string>public.app-category.finance</string>
+    <key>LSMinimumSystemVersion</key>        <string>%5</string>
+    <key>NSHighResolutionCapable</key>       <true/>
+    <key>NSHumanReadableCopyright</key>      <string>%6</string>
+    <key>NSPrincipalClass</key>              <string>NSApplication</string>
+    <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
+</dict>
+</plist>
+PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT);
+    }
+
+    run_tool :: (args: .. string) -> bool {
+        result, out, err := run_command(.. args, capture_and_return_output = true);
+        if out print("%", out);
+        if err print("%", err);
+        return result.type == .EXITED && result.exit_code == 0;
+    }
 }
 
 #if OS == .WINDOWS {
@@ -165,7 +371,7 @@ compile_shaders :: () -> string, bool {
 // exe. FreeType is the only runtime DLL.
 copy_runtime_files :: () {
     compiler_dir := tprint("%/modules", compiler_get_base_path());
-    #if OS == .WINDOWS {
+    #if OS == .WINDOWS {   // FreeType links statically on macOS.
         DLLS :: string.["freetype/windows/freetype.dll"];
         for DLLS {
             src := tprint("%/%", compiler_dir, it);

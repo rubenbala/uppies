@@ -79,10 +79,11 @@ fonts_shutdown :: () {
 }
 
 // Loads the first font file that exists from candidates, relative paths
-// being relative to the executable's directory.
+// being relative to the app's resources (the executable's directory, or
+// Contents/Resources in a macOS app bundle).
 load_font :: (candidates: [] string) -> *Font {
     for candidates {
-        path := ifx is_absolute_path(it) then it else tprint("%/%", exe_dir, it);
+        path := ifx is_absolute_path(it) then it else tprint("%/%", resource_dir, it);
         if !file_exists(path) continue;
         font := load_font_file(path);
         if font return font;

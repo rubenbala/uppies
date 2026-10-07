@@ -1,4 +1,4 @@
-// Uppies: a desktop app on Jai and Direct3D.
+// Uppies: a desktop app on Jai and Direct3D (Windows) or Metal (macOS).
 //
 // Frame structure (see run_frame):
 //
@@ -13,8 +13,8 @@
 //
 //   app/        the screens
 //   ui/         immediate-mode widgets, animation state, theme
-//   render/     draw list, fonts, graphics backends (d3d11/)
-//   platform/   window, input, OS services (platform_windows.jai)
+//   render/     draw list, fonts, graphics backends (d3d11/, metal/)
+//   platform/   window, input, OS services (platform_windows.jai, platform_macos.jai)
 //   core/       math, rectangles, colors, animation curves
 
 #import "Basic";
@@ -42,7 +42,11 @@ FT :: #import "freetype";
 #load "core/png.jai";
 #load "core/pdf.jai";
 #load "platform/platform.jai";
-#load "net/http_windows.jai";
+#if OS == .WINDOWS {
+    #load "net/http_windows.jai";
+} else {
+    #load "net/http_macos.jai";
+}
 #load "up/model.jai";
 #load "up/store.jai";
 #load "up/store_file.jai";
@@ -90,11 +94,17 @@ Frame_Clock :: struct {
 
 clock: Frame_Clock;
 exe_dir: string;
+resource_dir: string;   // Where data/ is: beside the exe, or Contents/Resources in a macOS app bundle.
 
 main :: () {
     exe_dir = copy_string(path_strip_filename(get_path_of_running_executable()));
     while exe_dir.count && (exe_dir[exe_dir.count - 1] == #char "/" || exe_dir[exe_dir.count - 1] == #char "\\") exe_dir.count -= 1;
     set_working_directory(exe_dir);
+    resource_dir = exe_dir;
+    #if OS == .MACOS {
+        // Uppies.app/Contents/MacOS/uppies keeps its data in Contents/Resources.
+        if ends_with(exe_dir, "/Contents/MacOS") resource_dir = sprint("%/Resources", slice(exe_dir, 0, exe_dir.count - "/MacOS".count));
+    }
 
     // -selftest | -demo | -size WxH | -script "steps" (see app/script.jai)
     // -data-dir PATH: keep settings, token and data there, even when
