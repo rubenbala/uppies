@@ -150,7 +150,11 @@ waits on a dispatch semaphore the block signals. AES-256-GCM is CommonCrypto's o
 `platform_protect`, DPAPI's counterpart, seals a secret with AES-GCM under a 32-byte key kept as
 a generic password in the login Keychain (made on first use, never replaced if it can't be
 read), with the entropy in the authenticated data; so `token.bin` and `store.uppies` have the
-same layout as on Windows. Icons are Unicode symbols from Apple Symbols and Menlo standing in for
+same layout as on Windows. Only the packaged app (a release build run from `Uppies.app`,
+`platform_uses_keychain`) uses the Keychain: every other build is a new app to it after each
+link, and would be asked for the key every time. Those keep the key in `local.key` (mode 0600)
+and all their files in `Uppies Dev` beside `Uppies`, since data sealed with one key is deleted
+by a build holding the other. Icons are Unicode symbols from Apple Symbols and Menlo standing in for
 the Segoe MDL2 code points (`icon_code_point` in `ui/theme.jai`). The Objective-C calls go through
 `objc_msgSend` cast to each signature; floats have wrappers of their own, since the compiler
 merged polymorphic wrappers' instantiations whose argument types differed. `jai build.jai - release bundle`

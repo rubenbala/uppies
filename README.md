@@ -74,12 +74,18 @@ jai build.jai - run           # build, then launch
 
 **macOS.** The same commands build `bin/uppies` with a Metal renderer, on Apple silicon with
 macOS 13 or newer. It needs Xcode and, once, its Metal Toolchain
-(`xcodebuild -downloadComponent MetalToolchain`). Everything works as on Windows: the token and
-the encrypted local copy are protected by a key in your login Keychain, and the data is kept in
-`~/Library/Application Support/Uppies`. An ad-hoc signed build is a new app to the Keychain each
+(`xcodebuild -downloadComponent MetalToolchain`). Everything works as on Windows: in the
+packaged app (`release bundle`, run from `Uppies.app`) the token and the encrypted local copy are
+protected by a key in your login Keychain, and the data is kept in
+`~/Library/Application Support/Uppies`. An ad-hoc signed app is a new app to the Keychain each
 time it is rebuilt, so macOS asks once whether it may use the Uppies key; set
 `UPPIES_SIGN_IDENTITY` to a codesigning identity to sign with it instead and keep the Keychain's
 trust across builds.
+
+Development builds (debug, and release run from `bin/`) never ask: they keep their key in
+`~/Library/Application Support/Uppies Dev/local.key`, readable only by your user, and their data
+in that folder too, apart from the packaged app's. That is weaker than the Keychain (anything
+running as you can read the key file), so use the packaged app for your real account day to day.
 
 ```bash
 jai build.jai - release bundle   # macOS: also make bin/Uppies.app (icon, Info.plist, ad-hoc signed)

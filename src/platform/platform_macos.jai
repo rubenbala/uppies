@@ -15,16 +15,18 @@
 //
 // - Secrets at rest (the token, the store file's key) are sealed with
 //   AES-256-GCM (CommonCrypto) under a key kept in the login Keychain, the
-//   counterpart of DPAPI.
+//   counterpart of DPAPI. Only the packaged app (a release build run from
+//   Uppies.app) uses the Keychain; development builds keep the key in a file
+//   and their data in a folder of their own (see platform_uses_keychain).
 
 platform_metal_layer: *void;   // CAMetalLayer, for the Metal backend.
 
 // How the UI names this platform and its parts.
 PLATFORM_NAME         :: "macOS";
 PLATFORM_DEVICE       :: "this Mac";
-PLATFORM_SECRET_STORE :: "the macOS Keychain";
+PLATFORM_SECRET_STORE := "the macOS Keychain";   // Development builds say otherwise (platform_init).
 PLATFORM_ACCOUNT      :: "your Mac user account";
-PLATFORM_TOKEN_STORED :: "Encrypted with a key in your login Keychain";
+PLATFORM_TOKEN_STORED := "Encrypted with a key in your login Keychain";
 MOD_KEY               :: "⌘";      // As written in shortcuts: ⌘F.
 MOD_SEPARATOR         :: "";
 MOD_CLICK             :: "⌘-click";
@@ -38,6 +40,10 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
     init_app_kit();
     init_objective_c_selector_struct(*sel);
     cocoa_context = context;
+    if !platform_uses_keychain() {
+        PLATFORM_SECRET_STORE = "a development key file";
+        PLATFORM_TOKEN_STORED = "Encrypted with this build's key file (development build)";
+    }
 
     app := NSApplication.sharedApplication();
     NSApplication.setActivationPolicy(app, NSApplicationActivationPolicyRegular);
@@ -199,12 +205,14 @@ platform_local_time :: () -> Local_Time {
 }
 
 // Per-user app directory (~/Library/Application Support/Uppies), created on
-// first use.
+// first use. Development builds use "Uppies Dev" beside it: their data is
+// sealed with another key, and the packaged app would throw it away (and the
+// other way round) if they shared a folder.
 platform_app_data_dir :: () -> string {
     if !app_data_dir {
         home := to_string(NSHomeDirectory());
         base := ifx home then tprint("%/Library/Application Support", home) else exe_dir;
-        app_data_dir = sprint("%/Uppies", base);
+        app_data_dir = sprint("%/%", base, ifx platform_uses_keychain() then "Uppies" else "Uppies Dev");
         make_directory_if_it_does_not_exist(app_data_dir, recursive = true);
     }
     return app_data_dir;
@@ -217,15 +225,24 @@ platform_set_app_data_dir :: (path: string) {
     make_directory_if_it_does_not_exist(app_data_dir, recursive = true);
 }
 
+// The packaged app: a release build running from Uppies.app. Only it keeps
+// its key in the Keychain. Every other build is a new app to the Keychain each
+// time it is linked (ad hoc signatures change with the code), so it would be
+// asked for the key after every rebuild.
+platform_uses_keychain :: () -> bool {
+    return APP_RELEASE && ends_with(exe_dir, "/Contents/MacOS");
+}
+
 // Secrets at rest are sealed with AES-256-GCM under a key kept in the
 // user's login Keychain: only this user on this Mac can open them, the
-// counterpart of DPAPI. Optional `entropy` must be given again to decrypt,
+// counterpart of DPAPI. (Development builds: under a key in a file, see
+// key_file_load.) Optional `entropy` must be given again to decrypt,
 // binding the secret to something else the app knows.
 platform_protect :: (plain: string, entropy := "") -> string, bool {
-    if !keychain_load_key() return "", false;
+    if !protect_load_key() return "", false;
     nonce: [AES_NONCE_SIZE] u8;
     if !platform_random_bytes(nonce) return "", false;
-    cipher, tag, ok := platform_aes_gcm_encrypt(keychain_key, nonce, as_bytes(protect_aad(entropy)), as_bytes(plain));
+    cipher, tag, ok := platform_aes_gcm_encrypt(protect_key, nonce, as_bytes(protect_aad(entropy)), as_bytes(plain));
     if !ok return "", false;
     defer array_free(cipher);
     result := alloc_string(PROTECT_HEADER + cipher.count + AES_TAG_SIZE);
@@ -238,12 +255,12 @@ platform_protect :: (plain: string, entropy := "") -> string, bool {
 
 platform_unprotect :: (cipher: string, entropy := "") -> string, bool {
     if cipher.count < PROTECT_HEADER + AES_TAG_SIZE || slice(cipher, 0, PROTECT_MAGIC.count) != PROTECT_MAGIC return "", false;
-    if !keychain_load_key() return "", false;
+    if !protect_load_key() return "", false;
     bytes := as_bytes(cipher);
     tag: [AES_TAG_SIZE] u8;
     memcpy(tag.data, cipher.data + cipher.count - AES_TAG_SIZE, AES_TAG_SIZE);
     sealed := array_view(bytes, PROTECT_HEADER, cipher.count - PROTECT_HEADER - AES_TAG_SIZE);
-    plain, ok := platform_aes_gcm_decrypt(keychain_key, array_view(bytes, PROTECT_MAGIC.count, AES_NONCE_SIZE), as_bytes(protect_aad(entropy)), sealed, tag);
+    plain, ok := platform_aes_gcm_decrypt(protect_key, array_view(bytes, PROTECT_MAGIC.count, AES_NONCE_SIZE), as_bytes(protect_aad(entropy)), sealed, tag);
     if !ok return "", false;
     return to_string(plain.data, plain.count), true;   // Heap, like the Windows version: the caller frees (and wipes) it.
 }
@@ -433,41 +450,70 @@ NSTrackingInVisibleRect         :: 0x200;
 
 arc4random_buf :: (buffer: *void, size: u64) #foreign libSystem;
 
-// The Keychain key behind platform_protect: one generic password item,
-// made on first use. Loaded once and kept for the session; the UI thread
-// (the token) and the store writer thread both use it.
+// The key behind platform_protect: in the packaged app one generic password
+// item in the Keychain, otherwise a file; made on first use. Loaded once and
+// kept for the session; the UI thread (the token) and the store writer thread
+// both use it.
 PROTECT_MAGIC  :: "UPK1";
 PROTECT_HEADER :: PROTECT_MAGIC.count + AES_NONCE_SIZE;   // Then the ciphertext, then the tag.
 KEYCHAIN_SERVICE :: "Uppies";
 KEYCHAIN_ACCOUNT :: "local-key";
 KEYCHAIN_LABEL   :: "Uppies local encryption key";
 
-keychain_key:    [AES_KEY_SIZE] u8;
-keychain_loaded: bool;
-keychain_failed: bool;   // Refused once: don't ask again this session.
-keychain_lock:   u32;    // os_unfair_lock; zero is unlocked, so no setup.
+protect_key:    [AES_KEY_SIZE] u8;
+protect_loaded: bool;
+protect_failed: bool;   // Refused once: don't ask again this session.
+protect_lock:   u32;    // os_unfair_lock; zero is unlocked, so no setup.
 
-keychain_load_key :: () -> bool {
-    os_unfair_lock_lock(*keychain_lock);
-    defer os_unfair_lock_unlock(*keychain_lock);
-    if keychain_loaded return true;
-    if keychain_failed return false;
-    status := keychain_read(*keychain_key);
+protect_load_key :: () -> bool {
+    os_unfair_lock_lock(*protect_lock);
+    defer os_unfair_lock_unlock(*protect_lock);
+    if protect_loaded return true;
+    if protect_failed return false;
+    if !platform_uses_keychain() {
+        if !key_file_load(*protect_key) {
+            memset(protect_key.data, 0, protect_key.count);
+            protect_failed = true;
+            log_error("Could not read or make the development key file in %.\n", platform_app_data_dir());
+            return false;
+        }
+        protect_loaded = true;
+        return true;
+    }
+    status := keychain_read(*protect_key);
     if status == errSecItemNotFound {
-        if !platform_random_bytes(keychain_key) return false;
-        status = keychain_add(*keychain_key);
-        if status == errSecDuplicateItem status = keychain_read(*keychain_key);   // Another copy of the app made one first.
+        if !platform_random_bytes(protect_key) return false;
+        status = keychain_add(*protect_key);
+        if status == errSecDuplicateItem status = keychain_read(*protect_key);   // Another copy of the app made one first.
     }
     if status != errSecSuccess {
         // Never replace an item we couldn't read: that would lock away
         // everything already sealed with it.
-        memset(keychain_key.data, 0, keychain_key.count);
-        keychain_failed = true;
+        memset(protect_key.data, 0, protect_key.count);
+        protect_failed = true;
         log_error("The Keychain did not give Uppies its key (OSStatus %).\n", status);
         return false;
     }
-    keychain_loaded = true;
+    protect_loaded = true;
     return true;
+}
+
+// Development builds: the key in local.key beside the data it protects,
+// readable only by this user (0600). Weaker than the Keychain: anything
+// running as this user can read the file, so it never holds the packaged
+// app's key (its data is in another folder).
+key_file_load :: (key: *[AES_KEY_SIZE] u8) -> bool {
+    path := tprint("%/local.key", platform_app_data_dir());
+    data, ok := read_entire_file(path,, temp);
+    if ok {
+        // Never replace a key file we couldn't use, as with the Keychain.
+        if data.count != AES_KEY_SIZE return false;
+        memcpy(key.data, data.data, AES_KEY_SIZE);
+        return true;
+    }
+    if file_exists(path) return false;
+    if !platform_random_bytes(key.*) return false;
+    return platform_write_file_atomic(path, key.*);
 }
 
 keychain_read :: (key: *[AES_KEY_SIZE] u8) -> s32 {

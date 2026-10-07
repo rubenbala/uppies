@@ -12,9 +12,10 @@
 //
 // macOS compiles Metal shaders with Xcode's `metal` and `metallib`, from the
 // Metal Toolchain component (once: xcodebuild -downloadComponent MetalToolchain).
-// Set UPPIES_SIGN_IDENTITY to a codesigning identity to sign with it instead
-// of ad hoc: the Keychain then knows the app across rebuilds and doesn't ask
-// again for the Uppies key each time.
+// Only the release bundle uses the Keychain (development builds keep their
+// key in a file; see platform_uses_keychain). Set UPPIES_SIGN_IDENTITY to a
+// codesigning identity to sign with it instead of ad hoc: the Keychain then
+// knows the app across rebuilds and doesn't ask again for the Uppies key.
 
 #import "Basic";
 #import "Compiler";
