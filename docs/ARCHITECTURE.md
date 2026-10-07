@@ -24,9 +24,11 @@ src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker
 src/net/http_macos.jai       HTTPS over NSURLSession (synchronous; called from worker threads)
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
+    themes.jai               Theme files: the TOML subset, the list of themes, switching and its fade
 src/app/                     The console: sync engine, analytics, recurring payments, pages, charts, inspector, printing, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
 assets/icon.png              256 px icon master; build.jai turns it into the exe's icon
+themes/                      The built-in themes (TOML), embedded at build time; README.md is the format
 ```
 
 Layering is strictly downward: `app` uses `ui`, `render`, `platform` and `core`; `render`
@@ -128,6 +130,19 @@ Layout is **rect cutting** (`cut_top`, `cut_left`, ... in `core/math.jai`): slic
 a rectangle's edges. Sizes are logical units; `px()` scales by the monitor's DPI and `snap()`
 rounds edges to whole pixels so 1 px borders stay crisp. `push_clip` / `push_opacity` clip
 and fade whole groups (page transitions, scrolling).
+
+## Themes
+
+Every color the UI draws comes from the global `theme` (`ui/theme.jai`), whose defaults are Uppies
+Dark. A theme file (`themes/*.toml`, a TOML subset: sections, `key = "#RRGGBB[AA]"`, comments)
+overrides any of them; `THEME_KEYS` in `ui/themes.jai` maps each key to a `Theme` member, and the
+self-test checks that the table covers every color, that each built-in sets every key, and that
+`uppies-dark.toml` equals the defaults. The built-ins are read with `#run` at build time, so the
+executable needs no files; the user's own come from `themes/` beside `settings.ini` and are read
+at startup and on **Reload themes**. Switching fades every color over 0.3 s (instant with reduced
+motion) and sets the window's title bar dark or light (`platform_set_dark_appearance`) from the
+background's luminance. The app icon's colors (`BRAND_*`) and the printed documents' palette are
+not themed.
 
 ## Platforms
 

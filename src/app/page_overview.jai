@@ -220,7 +220,7 @@ draw_month_spend_panel :: (r: Rect, st: *Overview_State) {
         ui_animate(*w.hover, ifx io.hovered then 1.0 else 0.0, 24);
         if w.hover > 0 draw_rect(snap(rect(rr.x - px(6), rr.y, rr.w + px(12), rr.h)), color_with_alpha(theme.hover, 0.55 * w.hover), px(2));
         name := ifx row.category >= 0 then store.categories[row.category].name else ifx row.category == -1 then "Uncategorised" else "Other payments";
-        color := ifx row.category >= 0 then category_color(row.category) else UNCATEGORISED_COLOR;
+        color := ifx row.category >= 0 then category_color(row.category) else theme.uncategorised;
         top := rect(rr.x, rr.y + px(2), rr.w, px(16));
         amount_w := px(84);
         draw_rect(snap(rect(top.x, top.y + px(4), px(8), px(8))), color, px(2));

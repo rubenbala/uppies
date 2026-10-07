@@ -6,6 +6,9 @@
 // focus, selection and the primary action; green is money coming in, amber
 // is money on hold, red is failure. Chart hues are validated for color
 // vision deficiency against the panel surface.
+//
+// These defaults are the Uppies Dark theme. Themes are text files that
+// override the colors (see ui/themes.jai and themes/ at the repo root).
 
 Theme :: struct {
     background     := #run rgb(0x0B0D10);   // Behind the panels.
@@ -35,17 +38,24 @@ Theme :: struct {
     positive       := #run rgb(0x52C48E);   // Money in.
     held           := #run rgb(0xE6B04A);   // On hold / pending.
     danger         := #run rgb(0xF0646C);
+    danger_hover   := #run rgb(0xFFB3B7);
     info           := #run rgb(0x72A9F5);
 
     chart_out      := #run rgb(0x3987E5);
     chart_in       := #run rgb(0x26A37A);
     chart_line     := #run rgb(0x6FA8EE);
 
-    shadow         := #run rgba(0x000000, 150);
+    // Up's parent categories, with fixed hues: color follows the category,
+    // never its rank. Validated (dark surface #14171B): every adjacent pair
+    // separates under deuteranopia (ΔE ≥ 13) and normal vision.
+    category_good_life := #run rgb(0xE0B021);
+    category_personal  := #run rgb(0xE8702A);
+    category_home      := #run rgb(0xB57BEB);
+    category_transport := #run rgb(0x3987E5);
+    uncategorised      := #run rgb(0x59606A);
 
-    brand_top      := #run rgb(0xFF9C6E);   // The app icon's plate and glyph (assets/icon.png).
-    brand_bottom   := #run rgb(0xEE5068);
-    brand_glyph    := #run rgb(0xFFFFFF);
+    shadow         := #run rgba(0x000000, 150);
+    scrim          := #run rgba(0x000000, 120);   // Over the window behind a dialog.
 
     radius_panel   := 4.0;
     radius_control := 3.0;
@@ -63,12 +73,24 @@ Theme :: struct {
 
 theme: Theme;
 
-// Up's parent categories, in a fixed order with fixed hues: color follows
-// the category, never its rank. Validated (dark surface #14171B): every
-// adjacent pair separates under deuteranopia (ΔE ≥ 13) and normal vision.
-PARENT_CATEGORY_IDS    :: string.["good-life", "personal", "home", "transport"];
-PARENT_CATEGORY_COLORS :: Color.[#run rgb(0xE0B021), #run rgb(0xE8702A), #run rgb(0xB57BEB), #run rgb(0x3987E5)];
-UNCATEGORISED_COLOR    :: #run rgb(0x59606A);
+// The app icon's plate and glyph (assets/icon.png): the same in every theme.
+BRAND_TOP    :: #run rgb(0xFF9C6E);
+BRAND_BOTTOM :: #run rgb(0xEE5068);
+BRAND_GLYPH  :: #run rgb(0xFFFFFF);
+
+// Up's parent categories, in a fixed order; parent_category_color gives each
+// its hue in the current theme.
+PARENT_CATEGORY_IDS :: string.["good-life", "personal", "home", "transport"];
+
+parent_category_color :: (slot: int) -> Color {
+    if slot == {
+        case 0; return theme.category_good_life;
+        case 1; return theme.category_personal;
+        case 2; return theme.category_home;
+        case 3; return theme.category_transport;
+    }
+    return theme.uncategorised;
+}
 
 Fonts :: struct {
     regular:  *Font;

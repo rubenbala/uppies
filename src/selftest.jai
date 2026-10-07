@@ -413,6 +413,54 @@ selftest :: () -> int {
     name := print_file_name("Transaction", " A/B: \"C\"? ", "2026-10-06");
     check(name == "Transaction - A B C - 2026-10-06.pdf", tprint("file names drop what Windows doesn't allow: %", name));
 
+    // Themes: the key table covers every color, each built-in sets every key
+    // without a problem, and Uppies Dark is the colors the code starts with.
+    color_members: [..] string;
+    color_members.allocator = temp;
+    for type_info(Theme).members if it.type == cast(*Type_Info) type_info(Color) array_add(*color_members, it.name);
+    unmapped: [..] string;
+    unmapped.allocator = temp;
+    for member: color_members {
+        keys := 0;
+        for THEME_KEYS if it.member == member keys += 1;
+        if keys != 1 array_add(*unmapped, member);
+    }
+    dangling := 0;
+    probe: Theme;
+    for THEME_KEYS if !theme_color_for_key(*probe, it.key) dangling += 1;
+    check(!unmapped.count && !dangling && THEME_KEYS.count == color_members.count, tprint("every theme color has one key (unmapped: %, dangling: %)", unmapped, dangling));
+    SENTINEL :: 0x01020304;
+    for BUILTIN_THEMES {
+        colors: Theme;
+        for color_members { (cast(*Color) (cast(*u8) *colors + member_offset(it))).* = SENTINEL; }
+        name, problem := theme_parse(it.text, *colors);
+        unset: [..] string;
+        unset.allocator = temp;
+        for color_members if (cast(*Color) (cast(*u8) *colors + member_offset(it))).* == SENTINEL array_add(*unset, it);
+        check(name.count && !problem.count && !unset.count, tprint("theme % (\"%\") parses and sets every color (problem: \"%\", unset: %)", it.id, name, problem, unset));
+        // Text stays readable on panels, and on the accent.
+        body := contrast(colors.text, colors.panel);
+        secondary := contrast(colors.text_secondary, colors.panel);
+        muted := contrast(colors.text_muted, colors.panel);
+        link := contrast(colors.accent, colors.panel);
+        button := contrast(colors.on_accent, colors.accent);
+        check(body >= 7 && secondary >= 4.5 && muted >= 2.5 && link >= 3 && button >= 3,
+            tprint("theme % contrast: text %, secondary %, muted %, link %, on accent %", it.id, formatFloat(body, trailing_width = 1), formatFloat(secondary, trailing_width = 1), formatFloat(muted, trailing_width = 1), formatFloat(link, trailing_width = 1), formatFloat(button, trailing_width = 1)));
+    }
+    default_theme: Theme;
+    builtin_dark: Theme;
+    theme_parse(BUILTIN_THEMES[0].text, *builtin_dark);
+    check(BUILTIN_THEMES[0].id == DEFAULT_THEME && memcmp(*default_theme, *builtin_dark, size_of(Theme)) == 0, "uppies-dark.toml is the built-in defaults");
+    parsed: Theme;
+    theme_name, problem := theme_parse("\xEF\xBB\xBFname = 'Test' # comment\r\naccent.base = \"#12345680\"\n[text]\n  primary=\"#a0B0c0\" # \"#000000\"\n", *parsed);
+    check(theme_name == "Test" && !problem.count && parsed.accent == rgba(0x123456, 0x80) && parsed.text == rgb(0xA0B0C0) && parsed.panel == default_theme.panel, tprint("theme files: BOM, comments, dotted keys, sections, alpha (problem: \"%\")", problem));
+    _, problem = theme_parse("[surface]\nbackground = \"#12345\"\n", *parsed);
+    check(problem == "line 2: surface.background is \"#12345\", not \"#RRGGBB\" or \"#RRGGBBAA\"", tprint("a bad color is reported: %", problem));
+    _, problem = theme_parse("\n[text]\nbody = \"#FFFFFF\"\n", *parsed);
+    check(problem == "line 3: unknown key text.body", tprint("an unknown key is reported: %", problem));
+    _, problem = theme_parse("name = Plain\n", *parsed);
+    check(problem == "line 1: the value of name goes in quotes", tprint("a bare value is reported: %", problem));
+
     // Every icon has a glyph in the icon font or a fallback.
     if fonts_init() && theme_load_fonts() && fonts.icons {
         missing: [..] string;
@@ -432,6 +480,27 @@ selftest :: () -> int {
 }
 
 #scope_file
+
+member_offset :: (name: string) -> s64 {
+    for type_info(Theme).members if it.name == name return it.offset_in_bytes;
+    return -1;
+}
+
+// WCAG contrast ratio of two opaque sRGB colors (1 to 21).
+contrast :: (a: Color, b: Color) -> float {
+    luminance :: (c: Color) -> float {
+        result: float;
+        weights :: float.[0.2126, 0.7152, 0.0722];
+        for 0..2 {
+            v := ((c >> cast(u32) (it * 8)) & 0xFF) / 255.0;
+            linear := ifx v <= 0.04045 then v / 12.92 else pow((v + 0.055) / 1.055, 2.4);
+            result += weights[it] * linear;
+        }
+        return result;
+    }
+    la, lb := luminance(a), luminance(b);
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05);
+}
 
 // The first series from this merchant (and, given one, at this amount).
 find_series :: (r: *Recurring_State, name: string, amount: s64 = 0) -> *Recurring_Series {

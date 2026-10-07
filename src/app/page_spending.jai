@@ -156,7 +156,7 @@ draw_category_table :: (r: Rect, st: *Spending_State, b: *Spend_Breakdown, perio
         color: Color;
         name: string;
         if row_data.kind == .BUCKET {
-            color = UNCATEGORISED_COLOR;
+            color = theme.uncategorised;
             name = ifx d.category == -1 then "Uncategorised" else "Other payments";
         } else {
             color = parent_color(d.parent);

@@ -178,8 +178,8 @@ draw_month_stack :: (label: string, r: Rect, months: [] Month_Stack, selected_mo
 
     legend := cut_top(*r, px(22));
     lx := legend.x + px(AXIS_W);
-    for 0..3 lx += legend_item(lx, legend.y + legend.h * 0.5, PARENT_CATEGORY_COLORS[it], parent_names[it]);
-    legend_item(lx, legend.y + legend.h * 0.5, UNCATEGORISED_COLOR, "Other");
+    for 0..3 lx += legend_item(lx, legend.y + legend.h * 0.5, parent_category_color(it), parent_names[it]);
+    legend_item(lx, legend.y + legend.h * 0.5, theme.uncategorised, "Other");
 
     plot := r;
     cut_left(*plot, px(AXIS_W));
@@ -227,7 +227,7 @@ draw_month_stack :: (label: string, r: Rect, months: [] Month_Stack, selected_mo
             h := values[i * 5 + k] * scale;
             if h < 1 continue;
             seg_h := max(h - ifx k == top_k then 0.0 else gap, 1.0);
-            color := ifx k < 4 then PARENT_CATEGORY_COLORS[k] else UNCATEGORISED_COLOR;
+            color := parent_category_color(k);
             if hovered >= 0 && hovered != i && m.month != selected_month color = color_lerp(color, theme.panel, 0.4);
             rr := ifx k == top_k then radius else 0.0;
             draw_rect_ex(rect(x, y - h, bar_w, seg_h), color, color, .[rr, rr, 0, 0]);

@@ -347,7 +347,7 @@ parent_slot :: (parent: s32) -> int {
 
 parent_color :: (parent: s32) -> Color {
     slot := parent_slot(parent);
-    return ifx slot >= 0 then PARENT_CATEGORY_COLORS[slot] else UNCATEGORISED_COLOR;
+    return parent_category_color(slot);
 }
 
 category_color :: (category: s32) -> Color {

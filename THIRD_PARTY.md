@@ -27,6 +27,14 @@ Uppies does not bundle any fonts. It uses the ones already installed with Window
 Cascadia Mono, Bahnschrift, Segoe MDL2 Assets, Segoe UI Symbol and Emoji) and loads them at run
 time from `C:\Windows\Fonts`. Fonts you place in `data/fonts/` are your own to license.
 
+## Theme palettes
+
+Four of the built-in themes (`themes/`) take their colors from published palettes, all under the
+MIT License: [Nord](https://www.nordtheme.com) (Arctic Ice Studio and Sven Greb),
+[Dracula](https://draculatheme.com) (Zeno Rocha), [Solarized](https://ethanschoonover.com/solarized/)
+(Ethan Schoonover) and [Catppuccin](https://catppuccin.com) (the Catppuccin organization). Only
+the color values are used; no code from these projects is included.
+
 ## Windows APIs
 
 Uppies calls Windows system libraries (user32, kernel32, crypt32, bcrypt, winhttp, Direct3D 11

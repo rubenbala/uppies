@@ -1,0 +1,53 @@
+# Nord: an arctic, north-bluish palette (Polar Night surfaces, Snow Storm text,
+# Frost accents, Aurora for meaning). Palette by Arctic Ice Studio, MIT
+# License; https://www.nordtheme.com
+
+name = "Nord"
+
+[surface]
+background    = "#242933"
+chrome        = "#2A303B"
+panel         = "#2E3440"     # nord0
+panel_header  = "#323845"
+raised        = "#353C4A"
+hover         = "#3B4252"     # nord1
+active        = "#434C5E"     # nord2
+border        = "#3B4252"
+border_strong = "#4C566A"     # nord3
+divider       = "#353B48"
+grid          = "#3B4252"
+shadow        = "#10131A99"
+scrim         = "#10131A80"
+
+[text]
+primary   = "#ECEFF4"         # nord6
+secondary = "#B9C2D0"
+muted     = "#818C9F"
+faint     = "#5C677B"
+
+[accent]
+base    = "#88C0D0"           # nord8
+hover   = "#9DCCD9"
+pressed = "#76AEBF"
+soft    = "#88C0D02B"
+wash    = "#88C0D014"
+text    = "#242933"
+
+[status]
+positive     = "#A3BE8C"      # nord14
+held         = "#EBCB8B"      # nord13
+danger       = "#BF616A"      # nord11
+danger_hover = "#D98E95"
+info         = "#81A1C1"      # nord9
+
+[chart]
+out  = "#5E81AC"              # nord10
+in   = "#8FBCBB"              # nord7
+line = "#88C0D0"
+
+[category]
+good_life = "#EBCB8B"
+personal  = "#D08770"         # nord12
+home      = "#B48EAD"         # nord15
+transport = "#81A1C1"
+other     = "#616E88"

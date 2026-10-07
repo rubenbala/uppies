@@ -25,7 +25,7 @@ draw_settings_page :: (r_in: Rect) {
     draw_keys_panel(appear_begin(left, 2));
     appear_end();
 
-    display_r := cut_top(*right, px(208));
+    display_r := cut_top(*right, ifx themes_dir().count then px(270) else px(244));
     cut_top(*right, gap);
     // On a short window About sets its logo beside the name, so Diagnostics keeps room for its
     // readouts and frame graph; shorter still, the graph goes, then Diagnostics gives way and
@@ -193,6 +193,32 @@ draw_data_panel :: (r: Rect) {
 draw_display_panel :: (r: Rect, st: *Settings_State) {
     content, _ := panel_begin(r, "Display");
     inner := rect_inset_xy(content, px(16), px(8));
+
+    row := cut_top(*inner, px(ROW));
+    draw_text_in_rect(fonts.regular, px(theme.font_size_body), row, "Theme", theme.text);
+    items := NewArray(themes.count, Dropdown_Item,, temp);
+    for themes items[it_index] = .{label = it.name, dot = it.colors.accent, detail = ifx it.dark then "Dark" else "Light"};
+    selected := theme_current;
+    if ui_dropdown("theme##settings", cut_right(*row, px(220)), items, *selected) choose_theme(selected);
+    dir := themes_dir();
+    if dir.count {
+        // The user's own themes: open the folder (a starter theme in it the first time), then reload.
+        cut_top(*inner, px(4));
+        links := cut_top(*inner, px(22));
+        open_label := "Open themes folder##settings";
+        open_w := measure_text(fonts.regular, px(theme.font_size_label), display_text(open_label));
+        if ui_link(open_label, cut_left(*links, open_w)) open_themes_folder(dir);
+        cut_left(*links, px(10));
+        draw_circle(links.x, links.y + links.h * 0.5, px(1.5), theme.text_faint);
+        cut_left(*links, px(10));
+        reload_label := "Reload themes##settings";
+        if ui_link(reload_label, cut_left(*links, measure_text(fonts.regular, px(theme.font_size_label), display_text(reload_label)))) {
+            themes_load(dir);
+            choose_theme(max(theme_find(settings.theme), 0));
+            app_toast(.INFO, tprint("% themes, % of them yours", themes.count, themes.count - BUILTIN_THEMES.count));
+        }
+    }
+    cut_top(*inner, px(6));
     if ui_toggle("Reduce motion", cut_top(*inner, px(40)), *settings.reduce_motion, "Changes happen at once instead of animating.") {
         ui.motion = ifx settings.reduce_motion then 0.0 else st.animation_speed;
         settings_save();
@@ -208,6 +234,29 @@ draw_display_panel :: (r: Rect, st: *Settings_State) {
             ui.motion = st.animation_speed;
         }
     }
+}
+
+choose_theme :: (index: int) {
+    entry := *themes[index];
+    if settings.theme != entry.id settings.theme = copy_string(entry.id);
+    theme_select(entry.id);
+    settings_save();
+    if entry.problem.count app_toast(.ERROR, tprint("%.toml, %", entry.id, entry.problem));
+}
+
+// Makes the folder, the first time with a copy of the current theme to start from.
+open_themes_folder :: (dir: string) {
+    if !is_directory(dir) {
+        make_directory_if_it_does_not_exist(dir, recursive = true);
+        current := themes[theme_current];
+        for BUILTIN_THEMES {
+            if it.id != current.id continue;
+            text := replace(it.text, tprint("name = \"%\"", current.name), "name = \"My theme\"");
+            write_entire_file(tprint("%/my-theme.toml", dir), text);
+            themes_load(dir);
+        }
+    }
+    platform_open_url(dir);
 }
 
 draw_diagnostics_panel :: (r: Rect) {

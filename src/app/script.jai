@@ -5,6 +5,7 @@
 // Steps run in order, separated by ';':
 //   wait SECONDS      let the app run (animations, sample-data loading)
 //   page NAME         overview, transactions, accounts, spending, recurring, tags, webhooks, settings
+//   theme ID          switch to a built-in theme (uppies-dark, uppies-light, nord, ...)
 //   shot PATH         save the next frame as a PNG
 //   pdf PATH          save the transaction open in the inspector as a PDF (no dialog)
 //   key NAME          press a key for one frame: DOWN, UP, ENTER, ESCAPE, TAB, F5, A..Z, 0..9
@@ -75,6 +76,8 @@ script_frame :: () {
                 return;
             case "page";
                 for PAGE_TITLES if to_lower_temp(it) == to_lower_temp(arg) select_page(cast(Page) it_index);
+            case "theme";
+                if !theme_select(arg, instant = true) log_error("Script: no theme %\n", arg);
             case "shot";
                 free(script.shot_path);
                 script.shot_path = copy_string(arg);

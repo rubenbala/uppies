@@ -210,7 +210,7 @@ draw_tag_detail :: (r_in: Rect, st: *Tags_State) {
         col := k / rows_per_col;
         rr := rect(inner.x + col * (col_w + px(16)), inner.y + (k % rows_per_col) * px(26), col_w, px(26));
         name := ifx c < store.categories.count then store.categories[c].name else "Uncategorised";
-        color := ifx c < store.categories.count then category_color(c) else UNCATEGORISED_COLOR;
+        color := ifx c < store.categories.count then category_color(c) else theme.uncategorised;
         top := rect(rr.x, rr.y, rr.w, px(16));
         draw_text_fit(fonts.regular, px(theme.font_size_label), rect(top.x, top.y, top.w - px(80), top.h), name, theme.text_secondary);
         draw_text_in_rect(fonts.semibold, px(theme.font_size_label), top, format_money(totals[c]), theme.text, .RIGHT, .{tabular = true});

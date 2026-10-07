@@ -23,7 +23,10 @@ Pages sit in a tab bar along the top (there is no sidebar):
 | Recurring    | What comes round on a schedule: subscriptions, bills and income found in your history, what they cost a month, what's due in the next 30 days, and price changes. Hide anything that isn't really recurring. |
 | Tags         | What each tag cost, by category and by month.                           |
 | Webhooks     | Create, ping and delete webhooks; delivery health and logs with payloads. |
-| Settings     | Connection, data (history depth, auto-refresh, transfer handling), display, diagnostics, keys. |
+| Settings     | Connection, data (history depth, auto-refresh, transfer handling), display (theme, motion), diagnostics, keys. |
+
+Six themes are built in (Uppies Dark, Uppies Light, Nord, Dracula, Solarized Light and Catppuccin
+Latte), and you can write your own: each is a small TOML file. See [themes/](themes/README.md).
 
 ## Connecting
 

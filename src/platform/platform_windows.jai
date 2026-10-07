@@ -82,9 +82,7 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
         SetWindowPos(platform_window, null, x, y, ow, oh, SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
-    // Dark title bar to match the UI (Windows 10 2004+; ignored elsewhere).
-    dark: s32 = 1;
-    DwmSetWindowAttribute(platform_window, DWMWA_USE_IMMERSIVE_DARK_MODE, *dark, size_of(s32));
+    platform_set_dark_appearance(true);
 
     update_client_size();
     return true;
@@ -93,6 +91,18 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
 // Called once the first frame has been rendered.
 platform_show_window :: () {
     ShowWindow(platform_window, SW_SHOW);
+}
+
+// A dark title bar to match a dark theme (Windows 10 2004+; ignored elsewhere).
+platform_set_dark_appearance :: (dark: bool) {
+    if !platform_window return;
+    value: s32 = xx dark;
+    DwmSetWindowAttribute(platform_window, DWMWA_USE_IMMERSIVE_DARK_MODE, *value, size_of(s32));
+    // Windows 10 repaints the title bar only when the window's activation
+    // changes: tell it the activation changed, to what it already is.
+    active := GetActiveWindow() == platform_window;
+    SendMessageW(platform_window, WM_NCACTIVATE, xx !active, 0);
+    SendMessageW(platform_window, WM_NCACTIVATE, xx active, 0);
 }
 
 platform_shutdown :: () {
@@ -653,6 +663,7 @@ SetTimer  :: (hwnd: HWND, timer_id: u64, interval_ms: u32, callback: *void) -> u
 KillTimer :: (hwnd: HWND, timer_id: u64) -> s32 #foreign win32_user32;
 DwmSetWindowAttribute :: (hwnd: HWND, attribute: u32, value: *void, size: u32) -> s32 #foreign win32_dwmapi;
 PostMessageW :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> s32 #foreign win32_user32;
+SendMessageW :: (hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT #foreign win32_user32;
 GetDoubleClickTime :: () -> u32 #foreign win32_user32;
 ShellExecuteW :: (hwnd: HWND, operation: *u16, file: *u16, parameters: *u16, directory: *u16, show: s32) -> *void #foreign win32_shell32;
 GetEnvironmentVariableW :: (name: *u16, buffer: *u16, size: u32) -> u32 #foreign win32_kernel32;

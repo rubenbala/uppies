@@ -353,7 +353,7 @@ draw_pending_section :: (doc: *Print_Doc) {
 // arm rises into an arrow, on a gradient plate. Glyph coordinates are the
 // icon's, in which the plate is 224 units across.
 print_brand_mark :: (p: *Pdf_Document, x: float, y: float, size: float) {
-    pdf_rect_gradient(p, x, y, size, size, theme.brand_top, theme.brand_bottom, size * 0.26);
+    pdf_rect_gradient(p, x, y, size, size, BRAND_TOP, BRAND_BOTTOM, size * 0.26);
     k  := size / 224;
     ox := x + 61.5 * k;
     oy := y + 90.5 * k;
@@ -364,7 +364,7 @@ print_brand_mark :: (p: *Pdf_Document, x: float, y: float, size: float) {
     cx := ox + r;
     cy := oy + 56 * k;
     c := r * 0.5523;
-    pdf_path_begin(p, stroke = theme.brand_glyph, width = stroke, round = true);
+    pdf_path_begin(p, stroke = BRAND_GLYPH, width = stroke, round = true);
     pdf_move_to(p, ox, oy + 4 * k);
     pdf_line_to(p, ox, cy);
     pdf_curve_to(p, ox, cy + c, cx - c, cy + r, cx, cy + r);

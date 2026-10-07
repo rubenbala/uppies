@@ -1,0 +1,52 @@
+# Uppies Light: white panels on a cool grey, with Up's coral deepened enough
+# to read as link text on white.
+
+name = "Uppies Light"
+
+[surface]
+background    = "#ECEEF2"
+chrome        = "#F6F7F9"
+panel         = "#FFFFFF"
+panel_header  = "#F8F9FB"
+raised        = "#FCFCFD"
+hover         = "#F0F2F5"
+active        = "#E3E6EB"
+border        = "#DCE0E5"
+border_strong = "#C3C9D1"
+divider       = "#E9EBEF"
+grid          = "#ECEEF1"
+shadow        = "#1A202C2E"
+scrim         = "#0F141A59"
+
+[text]
+primary   = "#16191D"
+secondary = "#4A515B"
+muted     = "#6E7681"
+faint     = "#A2A9B2"
+
+[accent]
+base    = "#E0503A"
+hover   = "#D14630"
+pressed = "#BC3B27"
+soft    = "#E0503A24"
+wash    = "#E0503A12"
+text    = "#FFFFFF"
+
+[status]
+positive     = "#17885A"
+held         = "#A86A12"
+danger       = "#D3343F"
+danger_hover = "#A8222D"
+info         = "#2F6FD0"
+
+[chart]
+out  = "#3478D9"
+in   = "#1E9470"
+line = "#3478D9"
+
+[category]
+good_life = "#C99410"
+personal  = "#E0661F"
+home      = "#9C5FD9"
+transport = "#3478D9"
+other     = "#9AA1AB"

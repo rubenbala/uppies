@@ -1,0 +1,52 @@
+# Catppuccin Latte: Catppuccin's light flavor, soft pastels with a mauve
+# accent. Palette by the Catppuccin org, MIT License; https://catppuccin.com
+
+name = "Catppuccin Latte"
+
+[surface]
+background    = "#E6E9EF"     # Mantle
+chrome        = "#DCE0E8"     # Crust
+panel         = "#EFF1F5"     # Base
+panel_header  = "#E9ECF1"
+raised        = "#F6F7FA"
+hover         = "#E4E7ED"
+active        = "#D6DAE3"
+border        = "#CCD0DA"     # Surface 0
+border_strong = "#BCC0CC"     # Surface 1
+divider       = "#DFE2E9"
+grid          = "#E1E4EA"
+shadow        = "#4C4F6929"
+scrim         = "#4C4F6959"
+
+[text]
+primary   = "#4C4F69"         # Text
+secondary = "#5C5F77"         # Subtext 1
+muted     = "#7C7F93"         # Overlay 2
+faint     = "#A3A7B6"
+
+[accent]
+base    = "#8839EF"           # Mauve
+hover   = "#7A2AE3"
+pressed = "#6A1FCC"
+soft    = "#8839EF26"
+wash    = "#8839EF12"
+text    = "#EFF1F5"
+
+[status]
+positive     = "#40A02B"      # Green
+held         = "#DF8E1D"      # Yellow
+danger       = "#D20F39"      # Red
+danger_hover = "#A80B2D"
+info         = "#1E66F5"      # Blue
+
+[chart]
+out  = "#1E66F5"
+in   = "#40A02B"
+line = "#7287FD"              # Lavender
+
+[category]
+good_life = "#DF8E1D"
+personal  = "#FE640B"         # Peach
+home      = "#EA76CB"         # Pink
+transport = "#1E66F5"
+other     = "#ACB0BE"         # Surface 2

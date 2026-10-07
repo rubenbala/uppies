@@ -100,6 +100,14 @@ platform_show_window :: () {
     NSApplication.activateIgnoringOtherApps(NSApp, YES);
 }
 
+// The window's title bar and controls in dark or light, to match the theme.
+platform_set_dark_appearance :: (dark: bool) {
+    if !window return;
+    name := NSString.getTempString(ifx dark then "NSAppearanceNameDarkAqua" else "NSAppearanceNameAqua");
+    appearance := msg_get(objc_getClass("NSAppearance"), sel.appearanceNamed_, name, *void);
+    if appearance msg_send(window, sel.setAppearance_, appearance);
+}
+
 platform_shutdown :: () {
     if window {
         NSWindow.setDelegate(window, null);
@@ -397,6 +405,8 @@ Selectors :: struct {
     unhideAllApplications_: Selector;
     performMiniaturize_: Selector;
     terminate_: Selector;
+    appearanceNamed_: Selector;
+    setAppearance_: Selector;
 }
 sel: Selectors;
 

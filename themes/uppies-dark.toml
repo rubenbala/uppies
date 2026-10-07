@@ -1,0 +1,55 @@
+# Uppies Dark: the default theme.
+#
+# A theme is a TOML file: a name, then colors in sections. Colors are
+# "#RRGGBB", or "#RRGGBBAA" with an alpha. Anything left out keeps this
+# theme's color. See README.md in this folder for what each key colors.
+
+name = "Uppies Dark"
+
+[surface]
+background    = "#0B0D10"     # Behind the panels.
+chrome        = "#101317"     # Top bar, status bar.
+panel         = "#14171B"
+panel_header  = "#171A1F"
+raised        = "#1B1F25"     # Inputs, buttons.
+hover         = "#21262D"
+active        = "#29303A"
+border        = "#262B32"
+border_strong = "#363D47"
+divider       = "#1D2127"
+grid          = "#22272E"     # Chart gridlines.
+shadow        = "#00000096"   # Under menus, tooltips and dialogs.
+scrim         = "#00000078"   # Over the window behind a dialog.
+
+[text]
+primary   = "#E6E9ED"
+secondary = "#A3AAB4"
+muted     = "#737B86"
+faint     = "#4E5560"
+
+[accent]                      # Focus, selection, links and the primary action.
+base    = "#FF7A64"           # Up's coral.
+hover   = "#FF917E"
+pressed = "#E8634E"
+soft    = "#FF7A6422"         # Selected rows.
+wash    = "#FF7A6412"         # Lighter tints.
+text    = "#1E0F0B"           # On an accent fill.
+
+[status]
+positive     = "#52C48E"      # Money in.
+held         = "#E6B04A"      # On hold / pending.
+danger       = "#F0646C"
+danger_hover = "#FFB3B7"
+info         = "#72A9F5"
+
+[chart]
+out  = "#3987E5"
+in   = "#26A37A"
+line = "#6FA8EE"
+
+[category]                    # Up's parent categories.
+good_life = "#E0B021"
+personal  = "#E8702A"
+home      = "#B57BEB"
+transport = "#3987E5"
+other     = "#59606A"         # Uncategorised.

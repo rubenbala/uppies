@@ -57,6 +57,7 @@ FT :: #import "freetype";
 #load "render/font.jai";
 #load "render/renderer.jai";
 #load "ui/theme.jai";
+#load "ui/themes.jai";
 #load "ui/ui.jai";
 #load "ui/text_input.jai";
 #load "app/app.jai";

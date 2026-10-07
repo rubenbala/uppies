@@ -1,0 +1,52 @@
+# Dracula: a dark theme in purple, pink and neon. Palette by Zeno Rocha,
+# MIT License; https://draculatheme.com
+
+name = "Dracula"
+
+[surface]
+background    = "#1E1F29"
+chrome        = "#21222C"
+panel         = "#282A36"     # Background
+panel_header  = "#2C2E3B"
+raised        = "#313342"
+hover         = "#3A3C4E"
+active        = "#44475A"     # Current Line
+border        = "#363849"
+border_strong = "#4B4E64"
+divider       = "#2F3140"
+grid          = "#343646"
+shadow        = "#0B0B1299"
+scrim         = "#0B0B1280"
+
+[text]
+primary   = "#F8F8F2"         # Foreground
+secondary = "#C3C5D6"
+muted     = "#7F87AD"
+faint     = "#575D80"
+
+[accent]
+base    = "#BD93F9"           # Purple
+hover   = "#CBA8FB"
+pressed = "#A67CEB"
+soft    = "#BD93F92B"
+wash    = "#BD93F914"
+text    = "#1E1F29"
+
+[status]
+positive     = "#50FA7B"      # Green
+held         = "#FFB86C"      # Orange
+danger       = "#FF5555"      # Red
+danger_hover = "#FF9A9A"
+info         = "#8BE9FD"      # Cyan
+
+[chart]
+out  = "#BD93F9"
+in   = "#50FA7B"
+line = "#8BE9FD"
+
+[category]
+good_life = "#F1FA8C"         # Yellow
+personal  = "#FFB86C"
+home      = "#FF79C6"         # Pink
+transport = "#8BE9FD"
+other     = "#6272A4"         # Comment

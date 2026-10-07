@@ -440,7 +440,7 @@ ui_button :: (label: string, r: Rect, style := Button_Style.SECONDARY, icon := I
             text_color = ifx enabled then color_lerp(theme.text_secondary, theme.text, w.hover) else theme.text_faint;
         case .DANGER;
             draw_rect_outline(b, color_with_alpha(theme.danger, 0.10 * w.hover + 0.06 * w.press), color_with_alpha(theme.danger, 0.35 + 0.4 * w.hover), hairline(), radius);
-            text_color = ifx enabled then color_lerp(theme.danger, rgb(0xFFB3B7), w.hover * 0.5) else theme.text_faint;
+            text_color = ifx enabled then color_lerp(theme.danger, theme.danger_hover, w.hover * 0.5) else theme.text_faint;
     }
     ui_focus_ring(b, w.focus, radius);
 
@@ -1060,7 +1060,7 @@ ui_modal_begin :: (width: float, height: float, t: float) -> Rect {
     push_clip_absolute(rect(0, 0, draw.width, draw.height));
     ui.in_overlay = true;
     e := ease_out_cubic(t);
-    draw_rect(rect(0, 0, draw.width, draw.height), rgba(0x000000, cast(u8) (120 * e)));
+    draw_rect(rect(0, 0, draw.width, draw.height), color_with_alpha(theme.scrim, e));
     r := snap(rect((draw.width - width) * 0.5, (draw.height - height) * 0.5 + px(10) * (1 - e), width, height));
     push_opacity(e);
     draw_shadow(r, px(theme.radius_panel), px(30), theme.shadow, 0, px(10));

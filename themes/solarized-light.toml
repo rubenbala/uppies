@@ -1,0 +1,52 @@
+# Solarized Light: warm cream surfaces and Solarized's accent colors.
+# Palette by Ethan Schoonover, MIT License; https://ethanschoonover.com/solarized/
+
+name = "Solarized Light"
+
+[surface]
+background    = "#EEE8D5"     # base2
+chrome        = "#F5EFDC"
+panel         = "#FDF6E3"     # base3
+panel_header  = "#F8F1DD"
+raised        = "#FFFAEB"
+hover         = "#F3ECD8"
+active        = "#E8E1CB"
+border        = "#E3DCC6"
+border_strong = "#D0C8AE"
+divider       = "#EBE4CF"
+grid          = "#EAE3CE"
+shadow        = "#5A4A1E2E"
+scrim         = "#2B220A4D"
+
+[text]
+primary   = "#073642"         # base02
+secondary = "#586E75"         # base01
+muted     = "#7D8F91"
+faint     = "#ABB4AF"
+
+[accent]
+base    = "#268BD2"           # blue
+hover   = "#1F7DBF"
+pressed = "#196CA6"
+soft    = "#268BD22B"
+wash    = "#268BD214"
+text    = "#FDF6E3"
+
+[status]
+positive     = "#859900"      # green
+held         = "#B58900"      # yellow
+danger       = "#DC322F"      # red
+danger_hover = "#A82220"
+info         = "#2AA198"      # cyan
+
+[chart]
+out  = "#268BD2"
+in   = "#859900"
+line = "#268BD2"
+
+[category]
+good_life = "#B58900"
+personal  = "#CB4B16"         # orange
+home      = "#6C71C4"         # violet
+transport = "#268BD2"
+other     = "#93A1A1"         # base1

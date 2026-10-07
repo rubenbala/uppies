@@ -83,6 +83,8 @@ app: App;
 
 app_init :: (start_demo := false) {
     settings_load();
+    themes_load(themes_dir());
+    theme_select(settings.theme, instant = true);
     recurring_overrides_load();
     renderer_settings.vsync = settings.vsync;
     ui.motion = ifx settings.reduce_motion then 0.0 else 1.0;
@@ -113,6 +115,7 @@ app_frame :: () {
     local_data_update();
     analytics_update(app.today);
     recurring_update(app.today);
+    theme_update();
     // Relative times ("3m ago") stay current: a frame a minute is enough.
     ui_wake_at(ui.time + 60 - fmod_cycling(cast(float) app.now.utc_seconds, 60.0));
 
@@ -296,13 +299,13 @@ draw_brand :: (r: Rect) -> float {
 // any scale: a "U" whose right arm rises into an arrow, on a gradient plate.
 // Glyph coordinates are the icon's, in which the plate is 224 units across.
 draw_brand_mark :: (mark: Rect) {
-    draw_rect_gradient(mark, theme.brand_top, theme.brand_bottom, mark.w * 0.26);
+    draw_rect_gradient(mark, BRAND_TOP, BRAND_BOTTOM, mark.w * 0.26);
 
     k  := mark.w / 224;
     ox := mark.x + 61.5 * k;   // Glyph origin: the left arm's centerline...
     oy := mark.y + 90.5 * k;   // ...where the arm's straight part begins.
     stroke := 31 * k;
-    color  := theme.brand_glyph;
+    color  := BRAND_GLYPH;
 
     // The bowl: the bottom of a rounded outline (borders draw inward), with
     // its top cut away where the left arm ends.

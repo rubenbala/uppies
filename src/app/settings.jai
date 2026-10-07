@@ -19,6 +19,7 @@ Settings :: struct {
     vsync := true;
     remember_token := true;
     store_locally := true;          // Keep an encrypted copy of the data on this machine.
+    theme := DEFAULT_THEME;         // A theme's id (see ui/themes.jai).
 }
 
 settings: Settings;
@@ -43,6 +44,7 @@ settings_load :: () {
             case "vsync";             settings.vsync = flag;
             case "remember_token";    settings.remember_token = flag;
             case "store_locally";     settings.store_locally = flag;
+            case "theme";             if value.count settings.theme = copy_string(value);
         }
     }
 }
@@ -58,7 +60,15 @@ settings_save :: () {
     print_to_builder(*builder, "vsync=%\n", settings.vsync);
     print_to_builder(*builder, "remember_token=%\n", settings.remember_token);
     print_to_builder(*builder, "store_locally=%\n", settings.store_locally);
+    print_to_builder(*builder, "theme=%\n", settings.theme);
     write_entire_file(tprint("%/settings.ini", platform_app_data_dir()), *builder);
+}
+
+// The user's own themes: *.toml files here (see ui/themes.jai). None in a
+// scripted run, so its screenshots look the same everywhere.
+themes_dir :: () -> string {
+    if !persist_enabled return "";
+    return tprint("%/themes", platform_app_data_dir());
 }
 
 token_path :: () -> string { return tprint("%/token.bin", platform_app_data_dir()); }
