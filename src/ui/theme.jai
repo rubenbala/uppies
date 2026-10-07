@@ -99,11 +99,14 @@ fonts: Fonts;
     FONT_SEMIBOLD_CANDIDATES :: string.["data/fonts/ui-semibold.ttf", "/System/Library/Fonts/SFNS.ttf"];
     FONT_LIGHT_CANDIDATES    :: string.["data/fonts/ui-light.ttf",    "/System/Library/Fonts/SFNS.ttf"];
     FONT_MONO_CANDIDATES     :: string.["data/fonts/ui-mono.ttf",     "/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc"];
-    // The UI's icons are Segoe MDL2 code points, which no macOS font has:
-    // icons are left out until an icon font ships in data/fonts/.
-    FONT_ICON_CANDIDATES     :: string.["data/fonts/ui-icons.ttf"];
+    // No macOS font has the Segoe MDL2 icons: they are drawn as Unicode
+    // symbols instead (MAC_ICON_SYMBOLS), mostly from Apple Symbols, the
+    // rest from the fallbacks. An icon font in data/fonts/ui-icons.ttf is
+    // taken to use the MDL2 code points, as on Windows.
+    FONT_ICON_CANDIDATES     :: string.["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/SFNS.ttf"];
+    FONT_ICON_MDL2           :: "data/fonts/ui-icons.ttf";
     FONT_NUMERIC_CANDIDATES  :: string.["data/fonts/ui-numeric.ttf",  "/System/Library/Fonts/SFNS.ttf"];
-    FONT_FALLBACK_CANDIDATES :: string.["/System/Library/Fonts/Apple Symbols.ttf"];
+    FONT_FALLBACK_CANDIDATES :: string.["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Menlo.ttc"];
 }
 
 theme_load_fonts :: () -> bool {
@@ -111,7 +114,12 @@ theme_load_fonts :: () -> bool {
     fonts.semibold = load_font(FONT_SEMIBOLD_CANDIDATES);
     fonts.light    = load_font(FONT_LIGHT_CANDIDATES);
     fonts.mono     = load_font(FONT_MONO_CANDIDATES);
-    fonts.icons    = load_font(FONT_ICON_CANDIDATES);
+    #if OS == .MACOS {
+        icons_are_mdl2 = file_exists(tprint("%/%", resource_dir, FONT_ICON_MDL2));
+        fonts.icons = ifx icons_are_mdl2 then load_font(.[FONT_ICON_MDL2]) else load_font(FONT_ICON_CANDIDATES);
+    } else {
+        fonts.icons = load_font(FONT_ICON_CANDIDATES);
+    }
     fonts.numeric  = load_font(FONT_NUMERIC_CANDIDATES);
     if !fonts.regular return false;
     if !fonts.semibold fonts.semibold = fonts.regular;
@@ -124,6 +132,26 @@ theme_load_fonts :: () -> bool {
         if file_exists(path) fonts_add_fallback(load_font_file(path));
     }
     return true;
+}
+
+// The code point that draws an icon in fonts.icons.
+icon_code_point :: (icon: Icon) -> u32 {
+    #if OS == .MACOS {
+        if !icons_are_mdl2 {
+            for MAC_ICON_SYMBOLS if it.icon == icon return it.code_point;
+            return 0;
+        }
+    }
+    return cast(u32) icon;
+}
+
+// How much larger icons are drawn than asked: the Unicode symbols standing
+// in for MDL2 on macOS are drawn smaller within their em square.
+icon_scale :: () -> float {
+    #if OS == .MACOS {
+        if !icons_are_mdl2 return MAC_ICON_SCALE;
+    }
+    return 1;
 }
 
 // Segoe MDL2 Assets code points.
@@ -166,4 +194,51 @@ Icon :: enum u32 {
     GLOBE          :: 0xE774;
     NOTE           :: 0xE70B;
     PRINT          :: 0xE749;
+}
+
+#if OS == .MACOS {
+    icons_are_mdl2: bool;   // fonts.icons came from data/fonts/ui-icons.ttf.
+    MAC_ICON_SCALE :: 1.4;
+
+    // Each icon's stand-in among the symbols macOS's fonts have (outlines
+    // only: Apple Color Emoji is bitmaps, which the glyph cache can't draw).
+    MAC_ICON_SYMBOLS :: struct { icon: Icon; code_point: u32; }.[
+        .{.REFRESH,       0x21BB},   // ↻
+        .{.SETTINGS,      0x2699},   // ⚙
+        .{.SEARCH,        0x2315},   // ⌕
+        .{.CLOSE,         0x2715},   // ✕
+        .{.CHEVRON_DOWN,  0x2304},   // ⌄
+        .{.CHEVRON_UP,    0x2303},   // ⌃
+        .{.CHEVRON_LEFT,  0x2039},   // ‹
+        .{.CHEVRON_RIGHT, 0x203A},   // ›
+        .{.ARROW_DOWN,    0x2193},   // ↓
+        .{.ARROW_UP,      0x2191},   // ↑
+        .{.COPY,          0x29C9},   // ⧉
+        .{.DELETE,        0x232B},   // ⌫
+        .{.ADD,           0xFF0B},   // ＋
+        .{.TAG,           0x2317},   // ⌗
+        .{.WARNING,       0x26A0},   // ⚠
+        .{.CHECK,         0x2713},   // ✓
+        .{.INFO,          0x2139},   // ℹ
+        .{.OPEN_EXTERNAL, 0x2197},   // ↗
+        .{.LINK,          0x26AD},   // ⚭
+        .{.FILTER,        0x25BD},   // ▽
+        .{.LOCK,          0x25A3},   // ▣
+        .{.ATTACH,        0x2398},   // ⎘
+        .{.SYNC,          0x27F3},   // ⟳
+        .{.CALENDAR,      0x25A6},   // ▦
+        .{.BANK,          0x2302},   // ⌂
+        .{.LIGHTNING,     0x26A1},   // ⚡
+        .{.VIEW,          0x25C9},   // ◉
+        .{.HIDE,          0x25CC},   // ◌
+        .{.MORE,          0x22EF},   // ⋯
+        .{.EDIT,          0x270E},   // ✎
+        .{.ERROR,         0x2297},   // ⊗
+        .{.PLUG,          0x2301},   // ⌁
+        .{.KEYBOARD,      0x2328},   // ⌨
+        .{.CLOCK,         0x25F7},   // ◷
+        .{.GLOBE,         0x25CE},   // ◎
+        .{.NOTE,          0x2261},   // ≡
+        .{.PRINT,         0x2399},   // ⎙
+    ];
 }

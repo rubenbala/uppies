@@ -66,7 +66,7 @@ Api_Stats :: struct {
 api_stats: Api_Stats;
 
 api_init :: () -> bool {
-    if !http_init("Uppies/1.0 (Windows; +https://api.up.com.au)") return false;
+    if !http_init(tprint("Uppies/1.0 (%; +https://api.up.com.au)", PLATFORM_NAME)) return false;
     init(*api.mutex);
     init(*api.semaphore);
     for * api.workers {

@@ -13,11 +13,22 @@
 // - Command and Control both drive Key.CONTROL, so the app's Ctrl shortcuts
 //   are the Command shortcuts a Mac user expects.
 //
-// Not yet on macOS: secrets at rest (Keychain) and AES-GCM (CommonCrypto).
-// Those report failure, so the token is kept for the session only and no
-// local copy of the data is written.
+// - Secrets at rest (the token, the store file's key) are sealed with
+//   AES-256-GCM (CommonCrypto) under a key kept in the login Keychain, the
+//   counterpart of DPAPI.
 
 platform_metal_layer: *void;   // CAMetalLayer, for the Metal backend.
+
+// How the UI names this platform and its parts.
+PLATFORM_NAME         :: "macOS";
+PLATFORM_DEVICE       :: "this Mac";
+PLATFORM_SECRET_STORE :: "the macOS Keychain";
+PLATFORM_ACCOUNT      :: "your Mac user account";
+PLATFORM_TOKEN_STORED :: "Encrypted with a key in your login Keychain";
+MOD_KEY               :: "⌘";      // As written in shortcuts: ⌘F.
+MOD_SEPARATOR         :: "";
+MOD_CLICK             :: "⌘-click";
+NEXT_PAGE_KEYS        :: "⌃Tab";   // ⌘Tab is the system's app switcher; Control drives Key.CONTROL too.
 
 MIN_WINDOW_WIDTH  :: 1000;   // Logical units.
 MIN_WINDOW_HEIGHT :: 620;
@@ -32,13 +43,13 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
     NSApplication.setActivationPolicy(app, NSApplicationActivationPolicyRegular);
     define_classes();
     delegate = objc_init(objc_alloc(delegate_class));
-    send(app, sel.setDelegate_, delegate);
+    msg_send(app, sel.setDelegate_, delegate);
     create_menu(app, title);
     NSApplication.finishLaunching(app);
 
     // Logical units as points, fit to the screen's visible area, centered.
     screen := NSScreen.mainScreen();
-    visible := get(screen, sel.visibleFrame, NSRect);
+    visible := msg_get(screen, sel.visibleFrame, NSRect);
     w := min(cast(float64) logical_width,  visible.size.width);
     h := min(cast(float64) logical_height, visible.size.height - 28);   // Title bar.
     content := NSMakeRect(0, 0, w, h);
@@ -51,14 +62,14 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
     NSWindow.setReleasedWhenClosed(window, NO);
     NSWindow.setTitle(window, title);
     NSWindow.setDelegate(window, delegate);
-    send(window, sel.setContentMinSize_, NSMakeSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT));
-    send(window, sel.setAcceptsMouseMovedEvents_, YES);
-    send(window, sel.setTabbingMode_, cast(NSInteger) 2);   // NSWindowTabbingModeDisallowed.
+    msg_send(window, sel.setContentMinSize_, NSMakeSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT));
+    msg_send(window, sel.setAcceptsMouseMovedEvents_, YES);
+    msg_send(window, sel.setTabbingMode_, cast(NSInteger) 2);   // NSWindowTabbingModeDisallowed.
     NSWindow.setCollectionBehavior(window, NSWindowCollectionBehaviorFullScreenPrimary | NSWindowCollectionBehaviorManaged);
 
     view = xx objc_init(objc_alloc(view_class));
     NSView.setWantsLayer(view, YES);   // Asks makeBackingLayer for the CAMetalLayer.
-    send(view, sel.setLayerContentsRedrawPolicy_, cast(NSInteger) 2);   // NSViewLayerContentsRedrawDuringViewResize.
+    msg_send(view, sel.setLayerContentsRedrawPolicy_, cast(NSInteger) 2);   // NSViewLayerContentsRedrawDuringViewResize.
     NSWindow.setContentView(window, view);
     NSWindow.makeFirstResponder(window, view);
     release(view);   // The window holds it.
@@ -66,11 +77,11 @@ platform_init :: (title: string, logical_width: int, logical_height: int) -> boo
 
     // Mouse moves, enters and leaves over the whole view, whatever its size.
     options: NSUInteger = NSTrackingMouseEnteredAndExited | NSTrackingMouseMoved | NSTrackingCursorUpdate | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect;
-    tracking := get(objc_alloc(objc_getClass("NSTrackingArea")), sel.initWithRect_options_owner_userInfo_, NSRect.{}, options, view, cast(*void) null, *void);
-    send(view, sel.addTrackingArea_, tracking);
+    tracking := msg_get(objc_alloc(objc_getClass("NSTrackingArea")), sel.initWithRect_options_owner_userInfo_, NSRect.{}, options, view, cast(*void) null, *void);
+    msg_send(view, sel.addTrackingArea_, tracking);
     release(tracking);
 
-    platform.double_click_seconds = cast(float) get(objc_getClass("NSEvent"), sel.doubleClickInterval, float64);
+    platform.double_click_seconds = cast(float) msg_get_float(objc_getClass("NSEvent"), sel.doubleClickInterval);
     update_scale();
     update_client_size();
     update_refresh_rate();
@@ -111,7 +122,7 @@ platform_wait_for_events :: (timeout_seconds: float64 = -1) {
     pool := objc_init(objc_alloc(NSAutoreleasePool));
     defer NSAutoreleasePool.drain(pool);
     until: *NSDate;
-    if timeout_seconds >= 0 until = get(objc_getClass("NSDate"), sel.dateWithTimeIntervalSinceNow_, timeout_seconds, *NSDate);
+    if timeout_seconds >= 0 until = msg_get_with_float(objc_getClass("NSDate"), sel.dateWithTimeIntervalSinceNow_, timeout_seconds);
     else                    until = NSDate.distantFuture();
     // Dequeued here, so dispatch it; the main loop pumps the rest.
     event := NSApplication.nextEventMatchingMask(NSApp, NSEventMaskAny, until, NSDefaultRunLoopMode, YES);
@@ -124,19 +135,21 @@ platform_wake :: () {
     // Worker threads have no autorelease pool of their own.
     pool := objc_init(objc_alloc(NSAutoreleasePool));
     defer NSAutoreleasePool.drain(pool);
-    event := get(objc_getClass("NSEvent"), sel.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_,
+    event := msg_get(objc_getClass("NSEvent"), sel.otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_,
                  NSEventTypeApplicationDefined, NSPoint.{}, cast(NSUInteger) 0, cast(float64) 0, cast(NSInteger) 0, cast(*void) null,
                  cast(s16) WAKE_SUBTYPE, cast(NSInteger) 0, cast(NSInteger) 0, *NSEvent);
-    if event send(NSApp, sel.postEvent_atStart_, event, NO);   // Thread-safe.
+    if event msg_send(NSApp, sel.postEvent_atStart_, event, NO);   // Thread-safe.
 }
 
 platform_open_url :: (url: string) {
     pool := objc_init(objc_alloc(NSAutoreleasePool));
     defer NSAutoreleasePool.drain(pool);
-    ns_url := NSURL.URLWithString(NSString.getTempString(url));
+    // A local path (the data folder) isn't a URL: "Application Support"
+    // has a space, which URLWithString rejects.
+    ns_url := ifx begins_with(url, "/") then NSURL.fileURLWithPath(NSString.getTempString(url)) else NSURL.URLWithString(NSString.getTempString(url));
     if !ns_url return;
-    workspace := get(objc_getClass("NSWorkspace"), sel.sharedWorkspace, *void);
-    get(workspace, sel.openURL_, ns_url, BOOL);
+    workspace := msg_get(objc_getClass("NSWorkspace"), sel.sharedWorkspace, *void);
+    msg_get(workspace, sel.openURL_, ns_url, BOOL);
 }
 
 // Asks where to save a file, with the system's Save panel, starting from
@@ -148,7 +161,7 @@ platform_save_file_dialog :: (title: string, suggested_name: string, type_name: 
     pool := objc_init(objc_alloc(NSAutoreleasePool));
     defer NSAutoreleasePool.drain(pool);
     panel := NSSavePanel.savePanel();
-    send(panel, sel.setTitle_, NSString.getTempString(title));
+    msg_send(panel, sel.setTitle_, NSString.getTempString(title));
     NSSavePanel.setNameFieldStringValue(panel, NSString.getTempString(suggested_name));
     ext := NSString.getTempString(extension);
     NSSavePanel.setAllowedFileTypes(panel, NSArray(*NSString).arrayWithObject(ext));
@@ -204,16 +217,35 @@ platform_set_app_data_dir :: (path: string) {
     make_directory_if_it_does_not_exist(app_data_dir, recursive = true);
 }
 
-// Secrets at rest belong in the Keychain; until that is done nothing is
-// protected, so nothing secret is written.
+// Secrets at rest are sealed with AES-256-GCM under a key kept in the
+// user's login Keychain: only this user on this Mac can open them, the
+// counterpart of DPAPI. Optional `entropy` must be given again to decrypt,
+// binding the secret to something else the app knows.
 platform_protect :: (plain: string, entropy := "") -> string, bool {
-    not_yet("Secret storage (Keychain)");
-    return "", false;
+    if !keychain_load_key() return "", false;
+    nonce: [AES_NONCE_SIZE] u8;
+    if !platform_random_bytes(nonce) return "", false;
+    cipher, tag, ok := platform_aes_gcm_encrypt(keychain_key, nonce, as_bytes(protect_aad(entropy)), as_bytes(plain));
+    if !ok return "", false;
+    defer array_free(cipher);
+    result := alloc_string(PROTECT_HEADER + cipher.count + AES_TAG_SIZE);
+    memcpy(result.data, PROTECT_MAGIC.data, PROTECT_MAGIC.count);
+    memcpy(result.data + PROTECT_MAGIC.count, nonce.data, AES_NONCE_SIZE);
+    memcpy(result.data + PROTECT_HEADER, cipher.data, cipher.count);
+    memcpy(result.data + PROTECT_HEADER + cipher.count, tag.data, AES_TAG_SIZE);
+    return result, true;
 }
 
 platform_unprotect :: (cipher: string, entropy := "") -> string, bool {
-    not_yet("Secret storage (Keychain)");
-    return "", false;
+    if cipher.count < PROTECT_HEADER + AES_TAG_SIZE || slice(cipher, 0, PROTECT_MAGIC.count) != PROTECT_MAGIC return "", false;
+    if !keychain_load_key() return "", false;
+    bytes := as_bytes(cipher);
+    tag: [AES_TAG_SIZE] u8;
+    memcpy(tag.data, cipher.data + cipher.count - AES_TAG_SIZE, AES_TAG_SIZE);
+    sealed := array_view(bytes, PROTECT_HEADER, cipher.count - PROTECT_HEADER - AES_TAG_SIZE);
+    plain, ok := platform_aes_gcm_decrypt(keychain_key, array_view(bytes, PROTECT_MAGIC.count, AES_NONCE_SIZE), as_bytes(protect_aad(entropy)), sealed, tag);
+    if !ok return "", false;
+    return to_string(plain.data, plain.count), true;   // Heap, like the Windows version: the caller frees (and wipes) it.
 }
 
 // Cryptographically secure random bytes from the OS.
@@ -222,16 +254,34 @@ platform_random_bytes :: (out: [] u8) -> bool {
     return true;
 }
 
-// AES-256-GCM: not yet (CommonCrypto). Fails, so the store is not saved.
+// AES-256-GCM (CommonCrypto). `aad` is authenticated but not encrypted.
+// Returns the ciphertext (same length as plain, heap) and the tag.
 platform_aes_gcm_encrypt :: (key: [] u8, nonce: [] u8, aad: [] u8, plain: [] u8) -> cipher: [] u8, tag: [AES_TAG_SIZE] u8, ok: bool {
     tag: [AES_TAG_SIZE] u8;
-    not_yet("AES-GCM (CommonCrypto)");
-    return .[], tag, false;
+    if key.count != AES_KEY_SIZE || nonce.count != AES_NONCE_SIZE return .[], tag, false;
+    cipher := NewArray(plain.count, u8, initialized = false);
+    status := CCCryptorGCMOneshotEncrypt(kCCAlgorithmAES, key.data, xx key.count, nonce.data, xx nonce.count,
+                                         non_null(aad), xx aad.count, non_null(plain), xx plain.count,
+                                         non_null(cipher), tag.data, AES_TAG_SIZE);
+    if status != kCCSuccess { array_free(cipher); return .[], tag, false; }
+    return cipher, tag, true;
 }
 
+// Fails if the ciphertext, tag or aad were altered, or the key or nonce are
+// wrong: nothing unauthenticated is ever returned.
 platform_aes_gcm_decrypt :: (key: [] u8, nonce: [] u8, aad: [] u8, cipher: [] u8, tag: [AES_TAG_SIZE] u8) -> plain: [] u8, ok: bool {
-    not_yet("AES-GCM (CommonCrypto)");
-    return .[], false;
+    if key.count != AES_KEY_SIZE || nonce.count != AES_NONCE_SIZE return .[], false;
+    plain := NewArray(cipher.count, u8, initialized = false);
+    tag_copy := tag;
+    status := CCCryptorGCMOneshotDecrypt(kCCAlgorithmAES, key.data, xx key.count, nonce.data, xx nonce.count,
+                                         non_null(aad), xx aad.count, non_null(cipher), xx cipher.count,
+                                         non_null(plain), tag_copy.data, AES_TAG_SIZE);
+    if status != kCCSuccess {
+        if plain.count memset(plain.data, 0, plain.count);
+        array_free(plain);
+        return .[], false;
+    }
+    return plain, true;
 }
 
 // Replaces `path` with `data` in one step: written beside it, flushed to
@@ -281,6 +331,7 @@ platform_sleep_until :: (deadline_seconds: float64) {
 using,except(Category) ObjC :: #import "Objective_C";
 #import "Objective_C/AppKit";
 POSIX :: #import "POSIX";
+CF :: #import "macOS";
 
 cocoa_context: #Context;
 window: *NSWindow;
@@ -332,34 +383,44 @@ Selectors :: struct {
 }
 sel: Selectors;
 
-// Typed objc_msgSend. send: no result; get: a result of type R.
-send :: (self: *void, s: Selector) #no_context {
-    f :: #type (*void, Selector) -> void #c_call;
-    (cast(f) objc_msgSend)(self, s);
+// Typed objc_msgSend. msg_send: no result; msg_get: a result of type R.
+// Floats have procedures of their own: the compiler merged msg_get's
+// float64-argument and pointer-argument instantiations into one, putting
+// arguments in d0 where x2 was meant.
+msg_send :: (self: *void, s: Selector) #no_context {
+    (cast(#type (*void, Selector) -> void #c_call) objc_msgSend)(self, s);
 }
-send :: (self: *void, s: Selector, a: $A) #no_context {
-    f :: #type (*void, Selector, A) -> void #c_call;
-    (cast(f) objc_msgSend)(self, s, a);
+msg_send :: (self: *void, s: Selector, a: $A) #no_context {
+    (cast(#type (*void, Selector, A) -> void #c_call) objc_msgSend)(self, s, a);
 }
-send :: (self: *void, s: Selector, a: $A, b: $B) #no_context {
-    f :: #type (*void, Selector, A, B) -> void #c_call;
-    (cast(f) objc_msgSend)(self, s, a, b);
+msg_send :: (self: *void, s: Selector, a: $A, b: $B) #no_context {
+    (cast(#type (*void, Selector, A, B) -> void #c_call) objc_msgSend)(self, s, a, b);
 }
-get :: (self: *void, s: Selector, $R: Type) -> R #no_context {
-    f :: #type (*void, Selector) -> R #c_call;
-    return (cast(f) objc_msgSend)(self, s);
+msg_get :: (self: *void, s: Selector, $R: Type) -> R #no_context {
+    return (cast(#type (*void, Selector) -> R #c_call) objc_msgSend)(self, s);
 }
-get :: (self: *void, s: Selector, a: $A, $R: Type) -> R #no_context {
-    f :: #type (*void, Selector, A) -> R #c_call;
-    return (cast(f) objc_msgSend)(self, s, a);
+msg_get :: (self: *void, s: Selector, a: $A, $R: Type) -> R #no_context {
+    return (cast(#type (*void, Selector, A) -> R #c_call) objc_msgSend)(self, s, a);
 }
-get :: (self: *void, s: Selector, a: $A, b: $B, c: $C, d: $D, $R: Type) -> R #no_context {
-    f :: #type (*void, Selector, A, B, C, D) -> R #c_call;
-    return (cast(f) objc_msgSend)(self, s, a, b, c, d);
+msg_get :: (self: *void, s: Selector, a: $A, b: $B, $R: Type) -> R #no_context {
+    return (cast(#type (*void, Selector, A, B) -> R #c_call) objc_msgSend)(self, s, a, b);
 }
-get :: (self: *void, s: Selector, a: $A, b: $B, c: $C, d: $D, e: $E, f_: $F, g: $G, h: $H, i: $I, $R: Type) -> R #no_context {
-    f :: #type (*void, Selector, A, B, C, D, E, F, G, H, I) -> R #c_call;
-    return (cast(f) objc_msgSend)(self, s, a, b, c, d, e, f_, g, h, i);
+msg_get :: (self: *void, s: Selector, a: $A, b: $B, c: $C, d: $D, $R: Type) -> R #no_context {
+    return (cast(#type (*void, Selector, A, B, C, D) -> R #c_call) objc_msgSend)(self, s, a, b, c, d);
+}
+msg_get :: (self: *void, s: Selector, a: $A, b: $B, c: $C, d: $D, e: $E, f_: $F, g: $G, h: $H, i: $I, $R: Type) -> R #no_context {
+    return (cast(#type (*void, Selector, A, B, C, D, E, F, G, H, I) -> R #c_call) objc_msgSend)(self, s, a, b, c, d, e, f_, g, h, i);
+}
+
+// A float64 (CGFloat, NSTimeInterval) argument or result.
+msg_send_float :: (self: *void, s: Selector, a: float64) #no_context {
+    (cast(#type (*void, Selector, float64) -> void #c_call) objc_msgSend)(self, s, a);
+}
+msg_get_float :: (self: *void, s: Selector) -> float64 #no_context {
+    return (cast(#type (*void, Selector) -> float64 #c_call) objc_msgSend)(self, s);
+}
+msg_get_with_float :: (self: *void, s: Selector, a: float64) -> *void #no_context {
+    return (cast(#type (*void, Selector, float64) -> *void #c_call) objc_msgSend)(self, s, a);
 }
 
 NSApplicationActivationPolicyRegular :: 0;
@@ -371,6 +432,117 @@ NSTrackingActiveInKeyWindow     :: 0x20;
 NSTrackingInVisibleRect         :: 0x200;
 
 arc4random_buf :: (buffer: *void, size: u64) #foreign libSystem;
+
+// The Keychain key behind platform_protect: one generic password item,
+// made on first use. Loaded once and kept for the session; the UI thread
+// (the token) and the store writer thread both use it.
+PROTECT_MAGIC  :: "UPK1";
+PROTECT_HEADER :: PROTECT_MAGIC.count + AES_NONCE_SIZE;   // Then the ciphertext, then the tag.
+KEYCHAIN_SERVICE :: "Uppies";
+KEYCHAIN_ACCOUNT :: "local-key";
+KEYCHAIN_LABEL   :: "Uppies local encryption key";
+
+keychain_key:    [AES_KEY_SIZE] u8;
+keychain_loaded: bool;
+keychain_failed: bool;   // Refused once: don't ask again this session.
+keychain_lock:   u32;    // os_unfair_lock; zero is unlocked, so no setup.
+
+keychain_load_key :: () -> bool {
+    os_unfair_lock_lock(*keychain_lock);
+    defer os_unfair_lock_unlock(*keychain_lock);
+    if keychain_loaded return true;
+    if keychain_failed return false;
+    status := keychain_read(*keychain_key);
+    if status == errSecItemNotFound {
+        if !platform_random_bytes(keychain_key) return false;
+        status = keychain_add(*keychain_key);
+        if status == errSecDuplicateItem status = keychain_read(*keychain_key);   // Another copy of the app made one first.
+    }
+    if status != errSecSuccess {
+        // Never replace an item we couldn't read: that would lock away
+        // everything already sealed with it.
+        memset(keychain_key.data, 0, keychain_key.count);
+        keychain_failed = true;
+        log_error("The Keychain did not give Uppies its key (OSStatus %).\n", status);
+        return false;
+    }
+    keychain_loaded = true;
+    return true;
+}
+
+keychain_read :: (key: *[AES_KEY_SIZE] u8) -> s32 {
+    service := CF.cfstring_from_string(KEYCHAIN_SERVICE);
+    account := CF.cfstring_from_string(KEYCHAIN_ACCOUNT);
+    defer { CF.CFRelease(service); CF.CFRelease(account); }
+    keys   := *void.[kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecMatchLimit];
+    values := *void.[kSecClassGenericPassword, service, account, CF.kCFBooleanTrue, kSecMatchLimitOne];
+    query := CF.CFDictionaryCreate(null, keys.data, values.data, keys.count, *CF.kCFTypeDictionaryKeyCallBacks, *CF.kCFTypeDictionaryValueCallBacks);
+    defer CF.CFRelease(query);
+    data: CF.CFDataRef;
+    status := SecItemCopyMatching(query, *data);
+    if status != errSecSuccess return status;
+    defer CF.CFRelease(data);
+    if CF.CFDataGetLength(data) != AES_KEY_SIZE return errSecDecode;
+    memcpy(key.data, CF.CFDataGetBytePtr(data), AES_KEY_SIZE);
+    return errSecSuccess;
+}
+
+keychain_add :: (key: *[AES_KEY_SIZE] u8) -> s32 {
+    service := CF.cfstring_from_string(KEYCHAIN_SERVICE);
+    account := CF.cfstring_from_string(KEYCHAIN_ACCOUNT);
+    label   := CF.cfstring_from_string(KEYCHAIN_LABEL);
+    data    := CF.CFDataCreate(null, key.data, AES_KEY_SIZE);
+    defer { CF.CFRelease(service); CF.CFRelease(account); CF.CFRelease(label); CF.CFRelease(data); }
+    keys   := *void.[kSecClass, kSecAttrService, kSecAttrAccount, kSecAttrLabel, kSecValueData];
+    values := *void.[kSecClassGenericPassword, service, account, label, data];
+    attributes := CF.CFDictionaryCreate(null, keys.data, values.data, keys.count, *CF.kCFTypeDictionaryKeyCallBacks, *CF.kCFTypeDictionaryValueCallBacks);
+    defer CF.CFRelease(attributes);
+    return SecItemAdd(attributes, null);
+}
+
+// The aad of a sealed secret: the app's name and the caller's entropy.
+protect_aad :: (entropy: string) -> string { return tprint("Uppies%", entropy); }
+
+as_bytes :: (s: string) -> [] u8 {
+    b: [] u8;
+    b.data, b.count = s.data, s.count;
+    return b;
+}
+
+security :: #library,system "Security";
+errSecSuccess       :: 0;
+errSecDuplicateItem :: -25299;
+errSecItemNotFound  :: -25300;
+errSecDecode        :: -26275;
+kSecClass:                *void #elsewhere security;
+kSecClassGenericPassword: *void #elsewhere security;
+kSecAttrService:          *void #elsewhere security;
+kSecAttrAccount:          *void #elsewhere security;
+kSecAttrLabel:            *void #elsewhere security;
+kSecValueData:            *void #elsewhere security;
+kSecReturnData:           *void #elsewhere security;
+kSecMatchLimit:           *void #elsewhere security;
+kSecMatchLimitOne:        *void #elsewhere security;
+SecItemCopyMatching :: (query: CF.CFDictionaryRef, result: *CF.CFDataRef) -> s32 #foreign security;
+SecItemAdd :: (attributes: CF.CFDictionaryRef, result: *void) -> s32 #foreign security;
+
+os_unfair_lock_lock   :: (lock: *u32) #foreign libSystem;
+os_unfair_lock_unlock :: (lock: *u32) #foreign libSystem;
+
+// AES-GCM in one call. CommonCrypto exports these from libSystem (since
+// macOS 10.13); the self-test checks them against a NIST vector.
+kCCAlgorithmAES :: 0;
+kCCSuccess      :: 0;
+CCCryptorGCMOneshotEncrypt :: (alg: u32, key: *void, key_length: u64, iv: *void, iv_length: u64, aad: *void, aad_length: u64,
+                               data_in: *void, data_in_length: u64, cipher_out: *void, tag_out: *void, tag_length: u64) -> s32 #foreign libSystem;
+CCCryptorGCMOneshotDecrypt :: (alg: u32, key: *void, key_length: u64, iv: *void, iv_length: u64, aad: *void, aad_length: u64,
+                               data_in: *void, data_in_length: u64, data_out: *void, tag_in: *void, tag_length: u64) -> s32 #foreign libSystem;
+
+// CommonCrypto rejects null buffers even when they are empty.
+non_null :: (bytes: [] u8) -> *void {
+    return ifx bytes.data then cast(*void) bytes.data else *empty_buffer;
+}
+empty_buffer: u8;
 libSystem :: #library,system "libSystem";
 
 not_yet :: (what: string) {
@@ -389,9 +561,9 @@ create_menu :: (app: *NSApplication, title: string) {
     others := NSMenu.addItemWithTitle(menu, S("Hide Others"), sel.hideOtherApplications_, S("h"));
     NSMenuItem.setKeyEquivalentModifierMask(others, NSEventModifierFlagCommand | NSEventModifierFlagOption);
     NSMenu.addItemWithTitle(menu, S("Show All"), sel.unhideAllApplications_, S(""));
-    send(menu, sel.addItem_, get(objc_getClass("NSMenuItem"), sel.separatorItem, *void));
+    msg_send(menu, sel.addItem_, msg_get(objc_getClass("NSMenuItem"), sel.separatorItem, *void));
     NSMenu.addItemWithTitle(menu, S("Minimize"), sel.performMiniaturize_, S("m"));
-    send(menu, sel.addItem_, get(objc_getClass("NSMenuItem"), sel.separatorItem, *void));
+    msg_send(menu, sel.addItem_, msg_get(objc_getClass("NSMenuItem"), sel.separatorItem, *void));
     // terminate: asks the app delegate, which turns it into quit_requested.
     NSMenu.addItemWithTitle(menu, S(tprint("Quit %", title)), sel.terminate_, S("q"));
     NSMenuItem.setSubmenu(app_item, menu);
@@ -402,7 +574,7 @@ create_menu :: (app: *NSApplication, title: string) {
 
 dispatch_event :: (event: *NSEvent) {
     type := NSEvent.type(event);
-    if type == NSEventTypeApplicationDefined && get(event, sel.subtype, s16) == WAKE_SUBTYPE {
+    if type == NSEventTypeApplicationDefined && msg_get(event, sel.subtype, s16) == WAKE_SUBTYPE {
         platform.needs_redraw = true;
         return;
     }
@@ -500,11 +672,11 @@ view_cursor_update :: (self: id, _sel: Selector, event: id) #c_call {
 
 view_scroll_wheel :: (self: id, _sel: Selector, event: id) #c_call {
     push_context cocoa_context {
-        dy := get(event, sel.scrollingDeltaY, CGFloat);
+        dy := msg_get_float(event, sel.scrollingDeltaY);
         // A mouse wheel reports lines (about one per notch); a trackpad or
         // Magic Mouse reports points, turned into notches of the UI's
         // scroll step (three rows) so content follows the fingers.
-        if get(event, sel.hasPreciseScrollingDeltas, BOOL) dy /= PRECISE_POINTS_PER_NOTCH;
+        if msg_get(event, sel.hasPreciseScrollingDeltas, BOOL) dy /= PRECISE_POINTS_PER_NOTCH;
         input.wheel += cast(float) dy;
         platform.needs_redraw = true;
     }
@@ -567,7 +739,7 @@ window_did_resize :: (self: id, _sel: Selector, notification: id) #c_call {
         platform.needs_redraw = true;
         // While the user drags an edge, AppKit is in its own loop: redraw
         // at the new size right away, as WM_SIZE does on Windows.
-        if get(window, sel.inLiveResize, BOOL) run_modal_frame();
+        if msg_get(window, sel.inLiveResize, BOOL) run_modal_frame();
     }
 }
 
@@ -630,7 +802,7 @@ flags_of :: (event: *NSEvent) -> NSUInteger {
 
 // Top-left origin, physical pixels.
 mouse_position :: (event: *NSEvent) -> float, float {
-    p := get(event, sel.locationInWindow, NSPoint);
+    p := msg_get(event, sel.locationInWindow, NSPoint);
     bounds := NSView.bounds(view);
     return cast(float) (p.x * platform.dpi_scale), cast(float) ((bounds.size.height - p.y) * platform.dpi_scale);
 }
@@ -683,7 +855,7 @@ update_scale :: () {
     scale := cast(float) NSWindow.backingScaleFactor(window);
     if scale <= 0 scale = 1;
     platform.dpi_scale = scale;
-    if platform_metal_layer send(platform_metal_layer, sel.setContentsScale_, cast(CGFloat) scale);
+    if platform_metal_layer msg_send_float(platform_metal_layer, sel.setContentsScale_, scale);
 }
 
 update_client_size :: () {
@@ -694,9 +866,9 @@ update_client_size :: () {
 }
 
 update_refresh_rate :: () {
-    screen := get(window, sel.screen, *void);
+    screen := msg_get(window, sel.screen, *void);
     if !screen return;
-    hz := get(screen, sel.maximumFramesPerSecond, NSInteger);
+    hz := msg_get(screen, sel.maximumFramesPerSecond, NSInteger);
     platform.refresh_hz = ifx hz >= 24 && hz <= 1000 then cast(float) hz else 60;
 }
 

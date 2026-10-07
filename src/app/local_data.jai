@@ -1,8 +1,8 @@
-// Local data: keeps the store saved on this PC (up/store_file.jai) so the app
+// Local data: keeps the store saved on this machine (up/store_file.jai) so the app
 // opens instantly with everything it had, then catches up with Up.
 //
 //   open    sync_start reads the file before anything is asked of Up. It only
-//           opens with the same token it was saved with (and the same Windows
+//           opens with the same token it was saved with (and the same OS
 //           user); anything else is deleted and downloaded fresh.
 //   save    whenever the store has changed and then been quiet for a moment,
 //           at least every 15 s during a long download, and at exit. The

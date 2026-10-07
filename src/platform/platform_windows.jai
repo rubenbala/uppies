@@ -12,6 +12,17 @@
 
 platform_window: HWND;
 
+// How the UI names this platform and its parts.
+PLATFORM_NAME         :: "Windows";
+PLATFORM_DEVICE       :: "this PC";
+PLATFORM_SECRET_STORE :: "Windows DPAPI";
+PLATFORM_ACCOUNT      :: "your Windows account";
+PLATFORM_TOKEN_STORED :: "Encrypted for this Windows user (DPAPI)";
+MOD_KEY               :: "Ctrl";   // As written in shortcuts: Ctrl+F.
+MOD_SEPARATOR         :: "+";
+MOD_CLICK             :: "Ctrl+click";
+NEXT_PAGE_KEYS        :: "Ctrl+Tab";
+
 MIN_WINDOW_WIDTH  :: 1000;   // Logical units.
 MIN_WINDOW_HEIGHT :: 620;
 

@@ -85,6 +85,8 @@ app_init :: (start_demo := false) {
     api_init();
     demo_init();
 
+    // A saved token connects straight away. Without one, the connect screen
+    // offers a token or sample data; only -demo starts on sample data.
     token, ok := token_load();
     if start_demo {
         sync_start("", true);
@@ -92,9 +94,6 @@ app_init :: (start_demo := false) {
     } else if ok && token.count {
         buffer_set(*app.connect.token, token);
         sync_start(token, false);
-        app.connect.auto_connecting = true;
-    } else if settings.sample_data {
-        sync_start("", true);
         app.connect.auto_connecting = true;
     }
     // Opened on saved data: the console is there from the first frame, no
@@ -148,7 +147,6 @@ app_toast :: (kind: Toast_Kind, text: string) {
 
 app_on_connected :: () {
     app.connect.auto_connecting = false;
-    settings.sample_data = sync.demo;
     if !sync.demo && settings.remember_token token_save(sync.token);
     settings_save();
     if !app.keep_page select_page(.OVERVIEW);
@@ -491,7 +489,7 @@ draw_status_bar :: (area: Rect) {
         item(*r, tprint("Saving % change%…", sync.pending_writes, ifx sync.pending_writes == 1 then "" else "s"), theme.held);
     }
 
-    hints := "Ctrl+1–7 pages · / search · F5 refresh · Tab focus";
+    hints := tprint("% pages · / search · F5 refresh · Tab focus", shortcut("1–7"));
     minutes := AUTO_REFRESH_MINUTES[settings.auto_refresh];
     auto := ifx minutes > 0 then tprint("Auto-refresh %", AUTO_REFRESH_LABELS[settings.auto_refresh]) else "Auto-refresh off";
     right := tprint("%   ·   %", auto, hints);
@@ -611,8 +609,6 @@ draw_confirm :: () {
                 case .DELETE_WEBHOOK; sync_delete_webhook(c.ref);
                 case .DISCONNECT;
                     token_forget();
-                    settings.sample_data = false;
-                    settings_save();
                     sync_disconnect();
                     app.connect.token.count = 0;
                 case .DELETE_LOCAL_DATA;
@@ -669,7 +665,7 @@ draw_connect_screen :: (full: Rect) {
     cut_top(*inner, px(6));
     draw_text_in_rect(fonts.semibold, px(20), cut_top(*inner, px(28)), "Connect your Up account", theme.text);
     cut_top(*inner, px(8));
-    intro := "Uppies reads your accounts and transactions with a personal access token. The token stays on this PC, encrypted for your Windows account, and is only ever sent to api.up.com.au.";
+    intro := tprint("Uppies reads your accounts and transactions with a personal access token. The token stays on %, encrypted for %, and is only ever sent to api.up.com.au.", PLATFORM_DEVICE, PLATFORM_ACCOUNT);
     for wrap_lines(fonts.regular, px(theme.font_size_body), intro, inner.w) draw_text_in_rect(fonts.regular, px(theme.font_size_body), cut_top(*inner, px(19)), it, theme.text_secondary);
     cut_top(*inner, px(6));
     link_r := cut_top(*inner, px(20));
@@ -693,7 +689,7 @@ draw_connect_screen :: (full: Rect) {
     if ui_icon_button("show-token", ifx st.show_token then Icon.HIDE else .VIEW, eye, ifx st.show_token then "Hide token" else "Show token", st.show_token) st.show_token = !st.show_token;
 
     cut_top(*inner, px(10));
-    ui_checkbox("Remember on this PC (encrypted with Windows DPAPI)", cut_top(*inner, px(22)), *settings.remember_token);
+    ui_checkbox(tprint("Remember on % (encrypted with %)", PLATFORM_DEVICE, PLATFORM_SECRET_STORE), cut_top(*inner, px(22)), *settings.remember_token);
 
     cut_top(*inner, px(14));
     buttons := cut_top(*inner, px(32));

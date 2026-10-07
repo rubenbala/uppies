@@ -371,7 +371,7 @@ to_upper_temp :: (s: string) -> string {
 
 draw_icon :: (icon: Icon, cx: float, cy: float, size: float, color: Color) {
     if icon == .NONE return;
-    draw_glyph_centered(fonts.icons, size, cx, cy, cast(u32) icon, color);
+    draw_glyph_centered(fonts.icons, size * icon_scale(), cx, cy, icon_code_point(icon), color);
 }
 
 draw_icon_in :: (icon: Icon, r: Rect, size: float, color: Color) {

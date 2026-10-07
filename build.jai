@@ -12,6 +12,9 @@
 //
 // macOS compiles Metal shaders with Xcode's `metal` and `metallib`, from the
 // Metal Toolchain component (once: xcodebuild -downloadComponent MetalToolchain).
+// Set UPPIES_SIGN_IDENTITY to a codesigning identity to sign with it instead
+// of ad hoc: the Keychain then knows the app across rebuilds and doesn't ask
+// again for the Uppies key each time.
 
 #import "Basic";
 #import "Compiler";
@@ -242,7 +245,20 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
             compiler_set_workspace_status(.FAILED, w);
             return false;
         }
+        identity := sign_identity();
+        if identity != "-" && !run_tool("codesign", "--force", "--sign", identity, output) {
+            log_error("codesign failed for %\n", output);
+            compiler_set_workspace_status(.FAILED, w);
+            return false;
+        }
         return true;
+    }
+
+    // UPPIES_SIGN_IDENTITY, or "-" (ad hoc).
+    sign_identity :: () -> string {
+        POSIX :: #import "POSIX";
+        identity := trim(to_string(POSIX.getenv("UPPIES_SIGN_IDENTITY")));
+        return ifx identity then identity else "-";
     }
 
     APP_NAME      :: "Uppies";
@@ -278,8 +294,9 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
             return "", false;
         }
         // Signing seals Info.plist and the resources to the executable;
-        // Apple silicon won't run an unsigned app.
-        if !run_tool("codesign", "--force", "--sign", "-", "--timestamp=none", app) {
+        // Apple silicon won't run an unsigned app. Ad hoc unless
+        // UPPIES_SIGN_IDENTITY names an identity.
+        if !run_tool("codesign", "--force", "--sign", sign_identity(), "--timestamp=none", app) {
             log_error("codesign failed for %\n", app);
             return "", false;
         }

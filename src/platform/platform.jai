@@ -117,6 +117,9 @@ input_end_frame :: () {
     input.text.count = 0;
 }
 
+// A shortcut as the platform writes it: Ctrl+F on Windows, ⌘F on a Mac.
+shortcut :: (key: string) -> string { return tprint("%1%2%3", MOD_KEY, MOD_SEPARATOR, key); }
+
 key_pressed :: inline (key: Key) -> bool { return input.key_pressed[cast(u16) key]; }
 ctrl_down   :: inline () -> bool { return input.key_down[Key.CONTROL]; }
 shift_down  :: inline () -> bool { return input.key_down[Key.SHIFT]; }

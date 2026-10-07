@@ -31,3 +31,10 @@ time from `C:\Windows\Fonts`. Fonts you place in `data/fonts/` are your own to l
 
 Uppies calls Windows system libraries (user32, kernel32, crypt32, bcrypt, winhttp, Direct3D 11
 and so on). These are part of Windows and are not redistributed.
+
+## macOS
+
+On macOS, FreeType is linked into the executable statically (same license and notice as above).
+Uppies uses the fonts that come with macOS (SF Pro, SF Mono, Apple Symbols, Menlo) from
+`/System/Library/Fonts`, and the system frameworks (AppKit, Foundation, CoreFoundation, Metal,
+Security, and CommonCrypto in libSystem). None of these are redistributed.

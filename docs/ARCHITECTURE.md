@@ -21,7 +21,7 @@ src/core/pdf.jai             PDF writer: pages of text, lines, rectangles and pa
 src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
 src/core/format.jai          Money (integer cents) and number formatting
 src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
-src/net/http_macos.jai       Not yet: every request fails, so macOS runs on sample data
+src/net/http_macos.jai       HTTPS over NSURLSession (synchronous; called from worker threads)
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
 src/app/                     The console: sync engine, analytics, pages, charts, inspector, printing, test scripts
@@ -141,9 +141,19 @@ into. Sizes are points times `backingScaleFactor` (`platform.dpi_scale`, 2 on Re
 main loop sleeps in `nextEventMatchingMask`; `platform_wake` posts an application-defined
 event. AppKit's live resize runs inside `sendEvent`, like Win32's modal loop, and
 `windowDidResize:` draws through `platform.modal_frame` meanwhile. Command and Control both
-drive `Key.CONTROL`, so the Ctrl shortcuts are the Command shortcuts Mac users expect. Not yet
-on macOS: HTTPS, Keychain storage for the token, AES-GCM for the store file (those report
-failure, so nothing secret is written), and the icon font. `jai build.jai - release bundle`
+drive `Key.CONTROL`, so the Ctrl shortcuts are the Command shortcuts Mac users expect, and the
+UI writes them the Mac way (⌘F, ⌘-click) through `shortcut()` and the `PLATFORM_*` strings.
+
+HTTPS is an ephemeral `NSURLSession` (no cookies or cache on disk): each request hands it a
+completion block, a Block-ABI literal built from Jai that captures one pointer, and the worker
+waits on a dispatch semaphore the block signals. AES-256-GCM is CommonCrypto's one-shot GCM.
+`platform_protect`, DPAPI's counterpart, seals a secret with AES-GCM under a 32-byte key kept as
+a generic password in the login Keychain (made on first use, never replaced if it can't be
+read), with the entropy in the authenticated data; so `token.bin` and `store.uppies` have the
+same layout as on Windows. Icons are Unicode symbols from Apple Symbols and Menlo standing in for
+the Segoe MDL2 code points (`icon_code_point` in `ui/theme.jai`). The Objective-C calls go through
+`objc_msgSend` cast to each signature; floats have wrappers of their own, since the compiler
+merged polymorphic wrappers' instantiations whose argument types differed. `jai build.jai - release bundle`
 also makes `bin/Uppies.app`: the executable, `data/` in `Contents/Resources` (found through
 `resource_dir`), an `.icns` made from `assets/icon.png`, an `Info.plist`, and an ad-hoc signature.
 
@@ -165,7 +175,9 @@ To add Linux:
 (or a filter) changes. Sample-data mode answers the same requests from `up/demo.jai`, so paging,
 parsing, errors and writes all run the real code.
 
-**Local data.** `up/store_file.jai` saves the store to `%APPDATA%/Uppies/store.uppies`, a format
+**Local data.** `up/store_file.jai` saves the store to `%APPDATA%/Uppies/store.uppies`
+(`~/Library/Application Support/Uppies` on macOS, where CommonCrypto and the Keychain key take
+the place of CNG and DPAPI), a format
 of our own: a small authenticated header (magic, version, DPAPI-wrapped key, nonce), then the
 payload as varint-encoded records (accounts, categories, tags, transactions referring to them by
 index, plus sync state), encrypted with AES-256-GCM (Windows CNG). The key is new on every save

@@ -72,10 +72,14 @@ jai build.jai - release       # optimized, no console window
 jai build.jai - run           # build, then launch
 ```
 
-**macOS (early, sample data only).** The same commands build `bin/uppies` with a Metal
-renderer, on Apple silicon with macOS 13 or newer. It needs Xcode and, once, its Metal
-Toolchain (`xcodebuild -downloadComponent MetalToolchain`). Networking, saving the token and
-the encrypted local copy aren't done on macOS yet, so run it with `-demo`.
+**macOS.** The same commands build `bin/uppies` with a Metal renderer, on Apple silicon with
+macOS 13 or newer. It needs Xcode and, once, its Metal Toolchain
+(`xcodebuild -downloadComponent MetalToolchain`). Everything works as on Windows: the token and
+the encrypted local copy are protected by a key in your login Keychain, and the data is kept in
+`~/Library/Application Support/Uppies`. An ad-hoc signed build is a new app to the Keychain each
+time it is rebuilt, so macOS asks once whether it may use the Uppies key; set
+`UPPIES_SIGN_IDENTITY` to a codesigning identity to sign with it instead and keep the Keychain's
+trust across builds.
 
 ```bash
 jai build.jai - release bundle   # macOS: also make bin/Uppies.app (icon, Info.plist, ad-hoc signed)
@@ -89,7 +93,7 @@ Command-line options, mostly for testing:
 | Option                 | Effect                                                            |
 |------------------------|-------------------------------------------------------------------|
 | `-demo`                | Start with sample data                                            |
-| `-selftest`            | Run the parser/store/format/DPAPI checks and exit (0 = pass)      |
+| `-selftest`            | Run the parser/store/format/crypto checks and exit (0 = pass)     |
 | `-size 1440x900`       | Initial window size (logical units)                               |
 | `-page spending`       | Open on a page                                                    |
 | `-script "steps"`      | Drive the app off screen and save PNGs and PDFs (see `src/app/script.jai`) |

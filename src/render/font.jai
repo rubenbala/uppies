@@ -238,6 +238,14 @@ fonts_add_fallback :: (font: *Font) {
     fallback_count += 1;
 }
 
+// Whether a code point draws from `font` or one of the fallbacks.
+font_has_glyph :: (font: *Font, code_point: u32) -> bool {
+    if !font return false;
+    if FT.FT_Get_Char_Index(font.face, xx code_point) return true;
+    for 0..fallback_count - 1 if FT.FT_Get_Char_Index(fallback_fonts[it].face, xx code_point) return true;
+    return false;
+}
+
 // Draws text vertically centered in r, aligned left, center or right.
 Text_Align :: enum u8 { LEFT; CENTER; RIGHT; }
 

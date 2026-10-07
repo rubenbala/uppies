@@ -66,9 +66,9 @@ draw_connection_panel :: (r: Rect, st: *Settings_State) {
     if !sync.demo {
         draw_field(cut_top(*inner, px(22)), "Access token", mask_token(sync.token), true);
         stored := file_exists(token_path());
-        draw_field(cut_top(*inner, px(22)), "Stored", ifx stored then "Encrypted for this Windows user (DPAPI)" else "Not stored: this session only");
+        draw_field(cut_top(*inner, px(22)), "Stored", ifx stored then PLATFORM_TOKEN_STORED else "Not stored: this session only");
     } else {
-        draw_field(cut_top(*inner, px(22)), "Data", "Generated on this PC; nothing is sent anywhere");
+        draw_field(cut_top(*inner, px(22)), "Data", tprint("Generated on %; nothing is sent anywhere", PLATFORM_DEVICE));
         draw_field(cut_top(*inner, px(22)), "Writes", "Category, tag and webhook changes apply to the simulation");
     }
 
@@ -96,11 +96,7 @@ draw_connection_panel :: (r: Rect, st: *Settings_State) {
             ask_confirm(.DISCONNECT, "Disconnect from Up?", "Uppies will forget the saved access token and everything it has loaded. You can connect again with the same token.", "Disconnect");
         }
     } else {
-        if ui_button("Connect a real account", cut_left(*buttons, px(178)), .PRIMARY, .PLUG) {
-            settings.sample_data = false;
-            settings_save();
-            sync_disconnect();
-        }
+        if ui_button("Connect a real account", cut_left(*buttons, px(178)), .PRIMARY, .PLUG) sync_disconnect();
     }
 }
 
@@ -128,11 +124,11 @@ draw_data_panel :: (r: Rect) {
     }
     cut_top(*inner, px(6));
     if ui_toggle("Leave out transfers between my accounts", cut_top(*inner, px(40)), *settings.exclude_transfers, "Moving money to a saver isn't income or spending. Affects every total.") settings_save();
-    if ui_toggle("Keep an encrypted copy on this PC", cut_top(*inner, px(40)), *settings.store_locally, "Opens instantly and downloads only what changed. Only your Windows account, with this token, can read it.") {
+    if ui_toggle(tprint("Keep an encrypted copy on %", PLATFORM_DEVICE), cut_top(*inner, px(40)), *settings.store_locally, tprint("Opens instantly and downloads only what changed. Only %, with this token, can read it.", PLATFORM_ACCOUNT)) {
         settings_save();
         if settings.store_locally {
             local_data_save();
-            app_toast(.SUCCESS, "Your data will be kept on this PC, encrypted.");
+            app_toast(.SUCCESS, tprint("Your data will be kept on %, encrypted.", PLATFORM_DEVICE));
         } else {
             local_data_delete();
             app_toast(.INFO, "Local copy deleted. Uppies will download everything each time it opens.");
@@ -166,7 +162,7 @@ draw_data_panel :: (r: Rect) {
             stored = "Not saved yet";
         }
     }
-    draw_field(cut_top(*inner, px(22)), "On this PC", stored, false, stored_color);
+    draw_field(cut_top(*inner, px(22)), tprint("On %", PLATFORM_DEVICE), stored, false, stored_color);
 
     // Up has no feed of changes: older edits are found by reading everything again.
     check := "";
@@ -189,7 +185,7 @@ draw_data_panel :: (r: Rect) {
     cut_left(*buttons, px(8));
     if ui_button("Delete local data", cut_left(*buttons, ui_button_width("Delete local data", .DELETE)), .DANGER, .DELETE, enabled = sync.phase == .READY || sync.phase == .LOADING) {
         ask_confirm(.DELETE_LOCAL_DATA, "Delete local data?",
-            tprint("Uppies will delete the copy of your data stored on this PC and download your accounts and % from Up again. Your access token and settings are kept.", to_lower_temp(HISTORY_LABELS[settings.history])),
+            tprint("Uppies will delete the copy of your data stored on % and download your accounts and % from Up again. Your access token and settings are kept.", PLATFORM_DEVICE, to_lower_temp(HISTORY_LABELS[settings.history])),
             "Delete and download again");
     }
 }
@@ -352,11 +348,11 @@ draw_about_panel :: (r: Rect, compact: bool, disclaimer: [] string) {
 draw_keys_panel :: (r: Rect) {
     content, _ := panel_begin(r, "Keyboard");
     inner := rect_inset_xy(content, px(16), px(8));
-    KEYS :: string.[
-        "Ctrl+1 – Ctrl+7", "Switch page",
-        "Ctrl+Tab",            "Next page (Shift: previous)",
-        "/  or  Ctrl+F",       "Search transactions",
-        "F5  or  Ctrl+R",      "Refresh from Up",
+    KEYS := string.[
+        tprint("% – %", shortcut("1"), shortcut("7")), "Switch page",
+        NEXT_PAGE_KEYS,        "Next page (Shift: previous)",
+        tprint("/  or  %", shortcut("F")),  "Search transactions",
+        tprint("F5  or  %", shortcut("R")), "Refresh from Up",
         "↑ ↓  PgUp PgDn  Home End", "Move through the focused table",
         "Esc",                 "Close a menu, clear a search, close the inspector",
         "Tab / Shift+Tab",     "Move keyboard focus; Enter or Space activates",

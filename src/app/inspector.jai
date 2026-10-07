@@ -27,7 +27,7 @@ draw_inspector :: (r: Rect, st: *Inspector_State, index: s32) -> bool {
     print_r := cut_right(*header, px(26));
     if ui_icon_button("close##inspector", .CLOSE, close_r, "Close (Esc)") close = true;
     if index < 0 || index >= store.transactions.count return close;
-    if ui_icon_button("print##inspector", .PRINT, print_r, "Save as PDF (Ctrl+P)") || (ctrl_letter_pressed(#char "P") && !ui.modal_prev) {
+    if ui_icon_button("print##inspector", .PRINT, print_r, tprint("Save as PDF (%)", shortcut("P"))) || (ctrl_letter_pressed(#char "P") && !ui.modal_prev) {
         // The Save dialog blocks until it closes; the frame carries on after.
         save_transaction_pdf(index);
     }
@@ -369,7 +369,7 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     field("Money out", ifx money_out then format_money(money_out) else "—", *y, x, w);
     field("Account", ifx several_accounts then "Several" else account_name(*store, accounts), *y, x, w);
     y += px(8);
-    draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), "Ctrl+click to add or remove · Shift+click for a run · Esc to clear", theme.text_faint);
+    draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), tprint("% to add or remove · Shift+click for a run · Esc to clear", MOD_CLICK), theme.text_faint);
     y += px(20);
 
     y += px(10);

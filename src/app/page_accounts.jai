@@ -187,7 +187,7 @@ ACCOUNT_TABLE_COLUMNS :: Column.[
 ];
 
 draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Period) {
-    content, _ := panel_begin(r, "Accounts", tprint("% · Ctrl+click or Shift+click to add accounts together", to_lower_temp(RANGE_LABELS[st.range])));
+    content, _ := panel_begin(r, "Accounts", tprint("% · % or Shift+click to add accounts together", to_lower_temp(RANGE_LABELS[st.range]), MOD_CLICK));
     count := chosen_count(st);
     single := count == 1;
     // One chosen account gets the table's gliding highlight; several are

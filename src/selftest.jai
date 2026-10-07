@@ -116,7 +116,7 @@ selftest :: () -> int {
     d := civil_from_days(days_from_civil(2024, 2, 29));
     check(d.year == 2024 && d.month == 2 && d.day == 29, "civil round trip");
 
-    // Secrets at rest: DPAPI round trip.
+    // Secrets at rest: DPAPI (Windows) or the Keychain key (macOS) round trip.
     secret := "up:yeah:not-a-real-token-0123456789";
     cipher, protected := platform_protect(secret);
     check(protected && cipher != secret, "token encrypts");
@@ -125,6 +125,10 @@ selftest :: () -> int {
     if protected {
         _, tampered := platform_unprotect(slice(cipher, 0, cipher.count - 1));
         check(!tampered, "tampered ciphertext is rejected");
+        bound, bound_ok := platform_protect(secret, "entropy a");
+        _, other_entropy := platform_unprotect(bound, "entropy b");
+        same, same_ok := platform_unprotect(bound, "entropy a");
+        check(bound_ok && !other_entropy && same_ok && same == secret, "a secret bound to entropy opens only with it");
     }
     check(mask_token(secret) == tprint("up:yeah:%2%1", "6789", "••••••••"), tprint("token masking: %", mask_token(secret)));
 
@@ -214,6 +218,20 @@ selftest :: () -> int {
     check(fits && lines[lines.count - 1] == "breaks.", tprint("PDF text wraps to its width (% lines)", lines.count));
     name := print_file_name("Transaction", " A/B: \"C\"? ", "2026-10-06");
     check(name == "Transaction - A B C - 2026-10-06.pdf", tprint("file names drop what Windows doesn't allow: %", name));
+
+    // Every icon has a glyph in the icon font or a fallback.
+    if fonts_init() && theme_load_fonts() && fonts.icons {
+        missing: [..] string;
+        missing.allocator = temp;
+        for type_info(Icon).values {
+            icon := cast(Icon) it;
+            if icon == .NONE continue;
+            if !font_has_glyph(fonts.icons, icon_code_point(icon)) array_add(*missing, type_info(Icon).names[it_index]);
+        }
+        check(!missing.count, tprint("every icon has a glyph (missing: %)", missing));
+    } else {
+        check(false, "the icon font loads");
+    }
 
     print("\n% failure(s)\n", failures);
     return ifx failures then 1 else 0;

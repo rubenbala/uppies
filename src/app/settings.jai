@@ -1,7 +1,8 @@
-// Preferences (plain text, %APPDATA%/Uppies/settings.ini) and the access
-// token (DPAPI-encrypted, %APPDATA%/Uppies/token.bin: readable only by this
-// Windows user on this machine). The synced data itself is in
-// %APPDATA%/Uppies/store.uppies (see up/store_file.jai).
+// Preferences (plain text, settings.ini) and the access token (token.bin,
+// sealed with platform_protect: DPAPI on Windows, a Keychain key on macOS,
+// so only this user on this machine can read it), in platform_app_data_dir
+// (%APPDATA%/Uppies, ~/Library/Application Support/Uppies). The synced data
+// itself is in store.uppies there (see up/store_file.jai).
 
 History_Depth :: enum u8 { ALL; TWO_YEARS; ONE_YEAR; NINETY_DAYS; }
 HISTORY_LABELS :: string.["All history", "2 years", "1 year", "90 days"];
@@ -16,8 +17,7 @@ Settings :: struct {
     reduce_motion := false;
     vsync := true;
     remember_token := true;
-    sample_data := false;           // Last session used sample data.
-    store_locally := true;          // Keep an encrypted copy of the data on this PC.
+    store_locally := true;          // Keep an encrypted copy of the data on this machine.
 }
 
 settings: Settings;
@@ -41,7 +41,6 @@ settings_load :: () {
             case "reduce_motion";     settings.reduce_motion = flag;
             case "vsync";             settings.vsync = flag;
             case "remember_token";    settings.remember_token = flag;
-            case "sample_data";       settings.sample_data = flag;
             case "store_locally";     settings.store_locally = flag;
         }
     }
@@ -57,7 +56,6 @@ settings_save :: () {
     print_to_builder(*builder, "reduce_motion=%\n", settings.reduce_motion);
     print_to_builder(*builder, "vsync=%\n", settings.vsync);
     print_to_builder(*builder, "remember_token=%\n", settings.remember_token);
-    print_to_builder(*builder, "sample_data=%\n", settings.sample_data);
     print_to_builder(*builder, "store_locally=%\n", settings.store_locally);
     write_entire_file(tprint("%/settings.ini", platform_app_data_dir()), *builder);
 }
