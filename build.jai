@@ -30,6 +30,10 @@
     #import "d3d_compiler";
 }
 
+// The one place the version lives: the program gets it as APP_VERSION (the
+// About panel, the User-Agent), and so does the macOS bundle's Info.plist.
+APP_VERSION :: "1.0.0";
+
 OUTPUT_DIR :: "bin";
 EXE_NAME   :: "uppies";
 ICON_FILE  :: "assets/icon.png";
@@ -82,6 +86,7 @@ build :: () {
 
     compiler_begin_intercept(w);
     add_build_string(tprint("APP_RELEASE :: %;\n", release), w);
+    add_build_string(tprint("APP_VERSION :: \"%\";\n", APP_VERSION), w);
     add_build_string(shader_source, w);
     add_build_file(tprint("%/src/main.jai", #filepath), w);
 
@@ -265,7 +270,6 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
     APP_NAME      :: "Uppies";
     APP_BUNDLE    :: "Uppies.app";
     APP_ID        :: "au.net.ruben.uppies";
-    APP_VERSION   :: "1.0";
     APP_COPYRIGHT :: "© 2026 Ruben Bala";
 
     // bin/Uppies.app: the executable, data/ as resources, an icon made from

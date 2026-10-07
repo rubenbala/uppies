@@ -342,7 +342,7 @@ draw_about_panel :: (r: Rect, compact: bool, disclaimer: [] string) {
     cut_top(*inner, px(13));
     for disclaimer draw_text_in_rect(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(DISCLAIMER_LINE)), it, theme.text_muted, .CENTER);
     cut_top(*inner, px(6));
-    draw_text_in_rect(fonts.regular, px(theme.font_size_small), cut_top(*inner, px(18)), "© 2026 Ruben Bala", theme.text_faint, .CENTER);
+    draw_text_in_rect(fonts.regular, px(theme.font_size_small), cut_top(*inner, px(18)), tprint("Version % · © 2026 Ruben Bala", APP_VERSION), theme.text_faint, .CENTER);
 }
 
 draw_keys_panel :: (r: Rect) {
