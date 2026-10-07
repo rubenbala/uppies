@@ -369,6 +369,18 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     field("Money out", ifx money_out then format_money(money_out) else "—", *y, x, w);
     field("Account", ifx several_accounts then "Several" else account_name(*store, accounts), *y, x, w);
     y += px(8);
+
+    // Saving them as a PDF, two ways. The Save dialog blocks until it
+    // closes; the frame carries on after.
+    section("Save as PDF", *y, x, w);
+    buttons := rect(x, y, w, px(30));
+    statement_r := cut_left(*buttons, (w - px(8)) * 0.5);
+    cut_left(*buttons, px(8));
+    if ui_button("Statement##bulk-print", statement_r, .SECONDARY, .PRINT, tooltip = "One list of them all: date, description and amount, with the total") save_statement_pdf(indices);
+    if ui_button("Each in full##bulk-print", buttons, .SECONDARY, .PRINT, tooltip = "Each on its own page, as when saving one transaction") save_transactions_pdf(indices);
+    y += px(36);
+    draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), "Oldest first, in one file.", theme.text_faint);
+    y += px(26);
     draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), tprint("% to add or remove · Shift+click for a run · Esc to clear", MOD_CLICK), theme.text_faint);
     y += px(20);
 

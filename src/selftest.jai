@@ -107,6 +107,7 @@ selftest :: () -> int {
     check(format_rfc3339_utc(ts.utc) == "2024-08-04T19:16:50Z", tprint("format utc: %", format_rfc3339_utc(ts.utc)));
     check(format_money(-123456) == tprint("%$1,234.56", MINUS_SIGN), tprint("money: %", format_money(-123456)));
     check(format_money(5, .ALWAYS) == "+$0.05", "money sign");
+    check(format_money(-123456, .POSITIVE) == "$1,234.56" && format_money(5, .POSITIVE) == "+$0.05" && format_money(0, .POSITIVE) == "$0.00", "money with only money in signed");
     check(format_money_compact(1234500) == "$12k", tprint("compact: %", format_money_compact(1234500)));
     check(format_money_compact(123450) == "$1.2k", tprint("compact: %", format_money_compact(123450)));
     check(format_grouped(1234567) == "1,234,567", "grouping");
@@ -219,6 +220,13 @@ selftest :: () -> int {
     pdf := print_transaction_pdf(0);
     check(begins_with(pdf, "%PDF-1.4\n") && ends_with(pdf, "%%EOF\n"), tprint("transaction PDF (% bytes)", pdf.count));
     check(pdf_cross_references_ok(pdf), "every cross-reference in the transaction PDF points at its object");
+    several: [..] s32;
+    several.allocator = temp;
+    for 0..min(store.transactions.count, 120) - 1 array_add(*several, cast(s32) it);
+    pdf = print_statement_pdf(several);
+    check(begins_with(pdf, "%PDF-1.4\n") && pdf_cross_references_ok(pdf), tprint("statement of % transactions (% bytes)", several.count, pdf.count));
+    pdf = print_transactions_pdf(.[several[0], several[1], several[2]]);
+    check(begins_with(pdf, "%PDF-1.4\n") && pdf_cross_references_ok(pdf) && contains(pdf, "Page 3 of"), tprint("three transactions, a page or more each (% bytes)", pdf.count));
     long: Print_Doc;
     print_begin(*long, "Test", "Long document");
     for 1..90 print_field(*long, tprint("Field %", it), "A value long enough that it has to wrap onto a second line in the value column of the page.");

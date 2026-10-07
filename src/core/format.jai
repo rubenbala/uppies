@@ -8,6 +8,7 @@ Sign_Display :: enum u8 {
     NEGATIVE;   // "−$5.00", "$5.00"
     ALWAYS;     // "−$5.00", "+$5.00"
     NONE;       // "$5.00" either way
+    POSITIVE;   // "$5.00", "+$5.00": only money in marked
 }
 
 // "1,284,001"
@@ -44,10 +45,8 @@ format_money :: (cents: s64, sign := Sign_Display.NEGATIVE) -> string {
     negative := cents < 0;
     v := ifx negative then -cents else cents;
     prefix := "";
-    if sign != .NONE {
-        if negative prefix = MINUS_SIGN;
-        else if sign == .ALWAYS && cents > 0 prefix = "+";
-    }
+    if negative && (sign == .NEGATIVE || sign == .ALWAYS) prefix = MINUS_SIGN;
+    else if cents > 0 && (sign == .ALWAYS || sign == .POSITIVE) prefix = "+";
     return tprint("%$%.%", prefix, format_grouped(v / 100), pad2(v % 100));
 }
 
@@ -57,10 +56,8 @@ format_money_whole :: (cents: s64, sign := Sign_Display.NEGATIVE) -> string {
     v := ifx negative then -cents else cents;
     v = (v + 50) / 100;
     prefix := "";
-    if sign != .NONE {
-        if negative && v > 0 prefix = MINUS_SIGN;
-        else if sign == .ALWAYS && !negative && v > 0 prefix = "+";
-    }
+    if negative && v > 0 && (sign == .NEGATIVE || sign == .ALWAYS) prefix = MINUS_SIGN;
+    else if !negative && v > 0 && (sign == .ALWAYS || sign == .POSITIVE) prefix = "+";
     return tprint("%$%", prefix, format_grouped(v));
 }
 

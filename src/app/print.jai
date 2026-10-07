@@ -3,12 +3,13 @@
 // A Print_Doc is a PDF (core/pdf.jai) with the app's page design: the
 // Uppies header on every page, then blocks that flow down the page and onto
 // new pages as they fill (a title, an amount, sections of label/value
-// fields, notes), and on every page a footer saying the document was made
-// with Uppies, when, and which page it is.
+// fields, tables, notes), and on every page a footer saying the document
+// was made with Uppies, when, and which page it is.
 //
 // Each kind of document is a procedure that builds one and returns the file;
-// print_transaction.jai is the first. Another (a statement, a tag's report)
-// is the same shape:
+// print_transaction.jai has a transaction, several transactions one after
+// another, and a statement of several. Another (an account's statement, a
+// tag's report) is the same shape:
 //
 //     doc: Print_Doc;
 //     print_begin(*doc, "Statement", title);
@@ -18,8 +19,8 @@
 //     bytes := print_finish(*doc);
 //     print_save(bytes, print_file_name("Statement", account, month));
 //
-// Blocks draw straight into the PDF; for something new on the page (a table,
-// a chart) add a block here, drawing with the pdf_ procedures, and call
+// Blocks draw straight into the PDF; for something new on the page (a
+// chart) add a block here, drawing with the pdf_ procedures, and call
 // print_room first so it moves to a new page rather than running off this one.
 // All of it is temporary storage.
 
@@ -29,6 +30,14 @@ Print_Doc :: struct {
     generated: Timestamp;
     y: float;                // Top of the next block, points from the top of the page.
     pending_section: string; // Drawn with the section's first field.
+    columns: [] Print_Column; // The table being drawn: its heading repeats on each new page.
+}
+
+// A column of a table. A width of 0 takes what the others leave.
+Print_Column :: struct {
+    title: string;
+    width: float;
+    right: bool;   // Aligned right, as amounts are.
 }
 
 PRINT_MARGIN       :: 56.0;    // Left and right, points (about 2 cm).
@@ -73,6 +82,8 @@ print_new_page :: (doc: *Print_Doc) {
     kw := pdf_measure(.BOLD, 8, kind, 0.8);
     pdf_text(p, p.width - PRINT_MARGIN - kw, top + 14.5, .BOLD, 8, kind, PRINT_MUTED, 0.8);
     pdf_line(p, PRINT_MARGIN, top + MARK + 12, p.width - PRINT_MARGIN, top + MARK + 12, 0.75, PRINT_RULE);
+
+    if doc.columns.count draw_table_heading(doc);
 }
 
 // Makes sure the next `height` points fit on this page, starting a new
@@ -162,6 +173,51 @@ print_note :: (doc: *Print_Doc, text: string) {
     }
 }
 
+// Starts a table: its column headings, which repeat at the top of every
+// page it flows onto, then a print_table_row for each row and
+// print_table_end after the last.
+print_table_begin :: (doc: *Print_Doc, columns: [] Print_Column) {
+    section_height := ifx doc.pending_section.count then 36.0 else 0.0;
+    print_room(doc, section_height + TABLE_HEADING + TABLE_PAD * 2 + TABLE_LINE);
+    draw_pending_section(doc);
+    doc.columns = columns;
+    draw_table_heading(doc);
+}
+
+// A row, one cell for each column; text wraps within its column. `colors`
+// are each cell's (0, or none given, for the usual). A total is bold with a
+// rule above it.
+print_table_row :: (doc: *Print_Doc, cells: [] string, colors: [] Color = .[], total := false) {
+    font := ifx total then Pdf_Font.BOLD else .REGULAR;
+    lines := NewArray(doc.columns.count, [] string,, temp);
+    most := 1;
+    for col, i: doc.columns {
+        if i >= cells.count break;
+        lines[i] = pdf_wrap(font, TABLE_SIZE, cells[i], cell_width(doc, i));
+        most = max(most, lines[i].count);
+    }
+    height := TABLE_PAD * 2 + most * TABLE_LINE;
+    print_room(doc, height);
+    if total pdf_line(*doc.pdf, PRINT_MARGIN, doc.y, doc.pdf.width - PRINT_MARGIN, doc.y, 0.75, PRINT_RULE);
+
+    x := PRINT_MARGIN;
+    for col, i: doc.columns {
+        w := column_width(doc, i);
+        color := ifx i < colors.count && colors[i] then colors[i] else PRINT_TEXT;
+        for lines[i] {
+            tx := ifx col.right then x + cell_width(doc, i) - pdf_measure(font, TABLE_SIZE, it) else x;
+            pdf_text(*doc.pdf, tx, doc.y + TABLE_PAD + 10 + it_index * TABLE_LINE, font, TABLE_SIZE, it, color);
+        }
+        x += w;
+    }
+    doc.y += height;
+    if !total pdf_line(*doc.pdf, PRINT_MARGIN, doc.y, doc.pdf.width - PRINT_MARGIN, doc.y, 0.5, PRINT_HAIRLINE);
+}
+
+print_table_end :: (doc: *Print_Doc) {
+    doc.columns = .[];
+}
+
 // Adds the footer to every page and returns the file.
 print_finish :: (doc: *Print_Doc) -> string {
     p := *doc.pdf;
@@ -235,6 +291,39 @@ format_utc_offset :: (minutes: s32) -> string {
 }
 
 #scope_file
+
+TABLE_HEADING :: 24.0;
+TABLE_PAD     :: 5.5;
+TABLE_LINE    :: 14.0;
+TABLE_SIZE    :: 10.0;
+TABLE_GAP     :: 12.0;   // Between one column's text and the next.
+
+column_width :: (doc: *Print_Doc, index: int) -> float {
+    w := doc.columns[index].width;
+    if w > 0 return w;
+    rest := print_content_width(doc);
+    for doc.columns rest -= it.width;
+    return max(rest, 0);
+}
+
+// Room for text in a column: all of it for the last, short of the gap for the rest.
+cell_width :: (doc: *Print_Doc, index: int) -> float {
+    w := column_width(doc, index);
+    if index < doc.columns.count - 1 w -= TABLE_GAP;
+    return max(w, 1);
+}
+
+draw_table_heading :: (doc: *Print_Doc) {
+    x := PRINT_MARGIN;
+    for col, i: doc.columns {
+        title := to_upper_temp(col.title);
+        tx := ifx col.right then x + cell_width(doc, i) - pdf_measure(.BOLD, 7.5, title, 0.6) else x;
+        pdf_text(*doc.pdf, tx, doc.y + 16, .BOLD, 7.5, title, PRINT_MUTED, 0.6);
+        x += column_width(doc, i);
+    }
+    doc.y += TABLE_HEADING;
+    pdf_line(*doc.pdf, PRINT_MARGIN, doc.y, doc.pdf.width - PRINT_MARGIN, doc.y, 0.75, PRINT_RULE);
+}
 
 content_bottom :: (doc: *Print_Doc) -> float {
     return doc.pdf.height - PRINT_FOOTER - 18;
