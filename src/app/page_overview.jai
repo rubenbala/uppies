@@ -275,7 +275,7 @@ draw_recent_panel :: (r: Rect, st: *Overview_State) {
     if tbl.clicked >= 0 show_transactions(select_id = store.transactions[tbl.clicked].id);
 }
 
-Attention_Action :: enum u8 { NONE; HELD; UNCATEGORISED; SETTINGS; WEBHOOKS; }
+Attention_Action :: enum u8 { NONE; HELD; UNCATEGORISED; SETTINGS; WEBHOOKS; RECURRING; }
 
 Attention_Item :: struct {
     icon:   Icon;
@@ -283,22 +283,45 @@ Attention_Item :: struct {
     title:  string;
     detail: string;
     action: Attention_Action;
+    series: u64;   // RECURRING: the one to show.
 }
 
 draw_attention_panel :: (r: Rect) {
     items: [..] Attention_Item;
     items.allocator = temp;
     a := *analytics;
-    if sync.auth_failed array_add(*items, .{.LOCK, theme.danger, "Access token rejected", "Up returned 401. Reconnect in Settings.", .SETTINGS});
-    else if sync.error.count array_add(*items, .{.WARNING, theme.held, "Last sync failed", sync.error, .SETTINGS});
-    if sync.phase == .LOADING array_add(*items, .{.SYNC, theme.info, tprint("Loading history · %", format_percent(sync_load_progress(), 0)), tprint("% transactions so far; totals fill in as it loads.", format_grouped(store.transactions.count)), .NONE});
-    if a.held_count array_add(*items, .{.CLOCK, theme.held, format_count(a.held_count, "transaction on hold", "transactions on hold"), tprint("% not yet settled", format_money(-a.held_total)), .HELD});
+    if sync.auth_failed array_add(*items, .{.LOCK, theme.danger, "Access token rejected", "Up returned 401. Reconnect in Settings.", .SETTINGS, 0});
+    else if sync.error.count array_add(*items, .{.WARNING, theme.held, "Last sync failed", sync.error, .SETTINGS, 0});
+    if sync.phase == .LOADING array_add(*items, .{.SYNC, theme.info, tprint("Loading history · %", format_percent(sync_load_progress(), 0)), tprint("% transactions so far; totals fill in as it loads.", format_grouped(store.transactions.count)), .NONE, 0});
+    if a.held_count array_add(*items, .{.CLOCK, theme.held, format_count(a.held_count, "transaction on hold", "transactions on hold"), tprint("% not yet settled", format_money(-a.held_total)), .HELD, 0});
+    // Recurring: prices that went up lately, and what is due this week.
+    for * recurring.series {
+        if !recurring_recent_change(it, app.today) || abs(it.amount) <= it.previous_amount continue;
+        array_add(*items, .{.ARROW_UP, theme.held, tprint("% went up to %", it.name, format_money(abs(it.amount))),
+                            tprint("from % on % · %", format_money(it.previous_amount), format_date(it.changed_day), to_lower_temp(CADENCE_LABELS[it.cadence])), .RECURRING, it.id});
+    }
+    due_out: s64;
+    due_names: [..] string;
+    due_names.allocator = temp;
+    first_due: u64;
+    for recurring_due(app.today, app.today + 6) {
+        s := *recurring.series[it];
+        if s.amount >= 0 continue;
+        if !due_names.count first_due = s.id;
+        due_out -= s.amount;
+        array_add(*due_names, s.name);
+    }
+    if due_names.count {
+        names := join(..array_view(due_names, 0, min(due_names.count, 3)), ", ",, temp);
+        if due_names.count > 3 names = tprint("%, …", names);
+        array_add(*items, .{.CALENDAR, theme.info, format_count(due_names.count, "payment due this week", "payments due this week"), tprint("% · %", format_money(due_out), names), .RECURRING, first_due});
+    }
     if a.uncategorised_count array_add(*items, .{.FILTER, theme.text_secondary, format_count(a.uncategorised_count, "uncategorised purchase", "uncategorised purchases"),
-                                                tprint("% without a category, all time", format_money(-a.uncategorised_total)), .UNCATEGORISED});
+                                                tprint("% without a category, all time", format_money(-a.uncategorised_total)), .UNCATEGORISED, 0});
     if sync.webhooks_state == .LOADED && sync.logs_for.count {
         failed := 0;
         for sync.logs if it.delivery != .DELIVERED failed += 1;
-        if failed array_add(*items, .{.LINK, theme.held, tprint("% failed webhook deliveries", failed), tprint("in the last % loaded", sync.logs.count), .WEBHOOKS});
+        if failed array_add(*items, .{.LINK, theme.held, tprint("% failed webhook deliveries", failed), tprint("in the last % loaded", sync.logs.count), .WEBHOOKS, 0});
     }
 
     content, _ := panel_begin(r, "Needs attention", ifx items.count then tprint("%", items.count) else "");
@@ -330,6 +353,7 @@ draw_attention_panel :: (r: Rect) {
                 case .UNCATEGORISED; show_transactions(category = -2);
                 case .SETTINGS;      select_page(.SETTINGS);
                 case .WEBHOOKS;      select_page(.WEBHOOKS);
+                case .RECURRING;     show_recurring(item.series);
             }
         }
     }

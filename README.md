@@ -20,6 +20,7 @@ Pages sit in a tab bar along the top (there is no sidebar):
 | Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags, or save the transaction as a PDF. Ctrl+click (or Shift+click) several to change their category or tag them all at once. |
 | Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Ctrl+click (or Shift+click) several to see them added together. |
 | Spending     | Where the money goes: categories grouped by parent with comparisons, 12-month stacked chart, top merchants. |
+| Recurring    | What comes round on a schedule: subscriptions, bills and income found in your history, what they cost a month, what's due in the next 30 days, and price changes. Hide anything that isn't really recurring. |
 | Tags         | What each tag cost, by category and by month.                           |
 | Webhooks     | Create, ping and delete webhooks; delivery health and logs with payloads. |
 | Settings     | Connection, data (history depth, auto-refresh, transfer handling), display, diagnostics, keys. |
@@ -51,6 +52,10 @@ background, to catch changes to older transactions (a category set in the Up app
 **Settings > Data** shows the file's size and the last full check, and has **Delete local
 data**, which removes the file and downloads everything again, and a switch to stop keeping a
 copy at all.
+
+Up's API has nothing on recurring payments, so the **Recurring** page works them out from your
+transactions on this PC. The ones you hide are kept in `user.bin` beside the data, sealed like
+the token, and survive **Delete local data**.
 
 ## Security
 
@@ -112,7 +117,7 @@ Scripted and timed runs never read or write the saved token or settings.
 
 | Key                     | Action                                        |
 |-------------------------|-----------------------------------------------|
-| Ctrl+1..7, Ctrl+Tab     | Switch page                                   |
+| Ctrl+1..8, Ctrl+Tab     | Switch page                                   |
 | / or Ctrl+F             | Search transactions                           |
 | F5 or Ctrl+R            | Refresh from Up                               |
 | ↑ ↓ PgUp PgDn Home End  | Move through the focused table                |

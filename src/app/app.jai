@@ -7,14 +7,15 @@
 //   Transactions  Find, inspect and fix (category, tags) individual transactions.
 //   Accounts      How is each balance moving, month by month?
 //   Spending      Where does the money go, and how does it compare?
+//   Recurring     What comes round on a schedule, and what is due next?
 //   Tags          What did each tagged project or trip cost?
 //   Webhooks      Are my webhooks configured and delivering?
 //   Settings      Connection, data, display, diagnostics.
 
-Page :: enum u8 { OVERVIEW; TRANSACTIONS; ACCOUNTS; SPENDING; TAGS; WEBHOOKS; SETTINGS; }
+Page :: enum u8 { OVERVIEW; TRANSACTIONS; ACCOUNTS; SPENDING; RECURRING; TAGS; WEBHOOKS; SETTINGS; }
 
-PAGE_TITLES :: string.["Overview", "Transactions", "Accounts", "Spending", "Tags", "Webhooks", "Settings"];
-PAGE_COUNT  :: 7;
+PAGE_TITLES :: string.["Overview", "Transactions", "Accounts", "Spending", "Recurring", "Tags", "Webhooks", "Settings"];
+PAGE_COUNT  :: 8;
 
 Toast_Kind :: enum u8 { INFO; SUCCESS; ERROR; }
 
@@ -61,6 +62,7 @@ App :: struct {
     txn: Transactions_State;
     accounts: Accounts_State;
     spending: Spending_State;
+    recurring_page: Recurring_Page_State;
     tags: Tags_State;
     webhooks: Webhooks_State;
     settings_page: Settings_State;
@@ -80,6 +82,7 @@ app: App;
 
 app_init :: (start_demo := false) {
     settings_load();
+    recurring_overrides_load();
     renderer_settings.vsync = settings.vsync;
     ui.motion = ifx settings.reduce_motion then 0.0 else 1.0;
     api_init();
@@ -108,6 +111,7 @@ app_frame :: () {
     sync_update();
     local_data_update();
     analytics_update(app.today);
+    recurring_update(app.today);
     // Relative times ("3m ago") stay current: a frame a minute is enough.
     ui_wake_at(ui.time + 60 - fmod_cycling(cast(float) app.now.utc_seconds, 60.0));
 
@@ -247,6 +251,7 @@ draw_console :: (full: Rect) {
         case .TRANSACTIONS; draw_transactions_page(content);
         case .ACCOUNTS;     draw_accounts_page(content);
         case .SPENDING;     draw_spending_page(content);
+        case .RECURRING;    draw_recurring_page(content);
         case .TAGS;         draw_tags_page(content);
         case .WEBHOOKS;     draw_webhooks_page(content);
         case .SETTINGS;     draw_settings_page(content);
@@ -489,7 +494,7 @@ draw_status_bar :: (area: Rect) {
         item(*r, tprint("Saving % change%…", sync.pending_writes, ifx sync.pending_writes == 1 then "" else "s"), theme.held);
     }
 
-    hints := tprint("% pages · / search · F5 refresh · Tab focus", shortcut("1–7"));
+    hints := tprint("% pages · / search · F5 refresh · Tab focus", shortcut("1–8"));
     minutes := AUTO_REFRESH_MINUTES[settings.auto_refresh];
     auto := ifx minutes > 0 then tprint("Auto-refresh %", AUTO_REFRESH_LABELS[settings.auto_refresh]) else "Auto-refresh off";
     right := tprint("%   ·   %", auto, hints);

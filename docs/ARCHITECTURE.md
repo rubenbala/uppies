@@ -24,7 +24,7 @@ src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker
 src/net/http_macos.jai       HTTPS over NSURLSession (synchronous; called from worker threads)
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
-src/app/                     The console: sync engine, analytics, pages, charts, inspector, printing, test scripts
+src/app/                     The console: sync engine, analytics, recurring payments, pages, charts, inspector, printing, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
 assets/icon.png              256 px icon master; build.jai turns it into the exe's icon
 ```
@@ -175,8 +175,20 @@ To add Linux:
 `up/client.jai` queues requests for two worker threads; each finished request posts
 `WM_APP_WAKE`, so the UI loop wakes, takes the replies (`api_take_completed`) and hands them to
 `app/sync.jai`, which parses them into `up/store.jai`. Every store change bumps
-`store.version`; `app/analytics.jai` and each page's cached rows recompute only when the version
-(or a filter) changes. Sample-data mode answers the same requests from `up/demo.jai`, so paging,
+`store.version`; `app/analytics.jai`, `app/recurring.jai` and each page's cached rows recompute
+only when the version (or a filter) changes.
+
+**Recurring payments.** The API has no scheduled payments (only the Open Banking API does, and
+card subscriptions are charged by the merchant anyway), so `app/recurring.jai` finds them in the
+history. It groups transactions by account, merchant and direction (leaving out transfers,
+purchases made in person and money into savers), splits card charges by price, joins price
+groups that follow one another on one schedule (a price rise), fits the gaps between charges to
+weekly through yearly, and predicts the next date and amount. Bills and pay stay whole, since
+their amounts vary. Series the customer hides are kept in `user.bin`, sealed with
+`platform_protect` and apart from `store.uppies`, which is thrown away with the token. The
+self-test runs it over the sample history, which has the cases (a price rise, two subscriptions
+from one merchant, the 31st, a cancellation, a yearly renewal, quarterly bills), and over a
+made-up one for the edge cases. Sample-data mode answers the same requests from `up/demo.jai`, so paging,
 parsing, errors and writes all run the real code.
 
 **Local data.** `up/store_file.jai` saves the store to `%APPDATA%/Uppies/store.uppies`

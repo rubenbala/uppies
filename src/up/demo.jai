@@ -229,16 +229,22 @@ Recurring :: struct {
     day_of_month: s32;
     method:   string;
     txn_type: string;
+    ends_days_ago: s64;   // Cancelled this long ago; 0 while still going.
 }
 
+// Charged on the day of the month, or the month's last day when it is
+// shorter (Canva, on the 31st).
 MONTHLY :: Recurring.[
-    .{"Spotify",          "SPOTIFY P2D4F8E1A2 STOCKHOLM", "tv-and-music",            1399,  3,  "CARD_ON_FILE", "Purchase"},
-    .{"Apple",            "APPLE.COM/BILL SYDNEY",        "apps-games-and-software", 449,   5,  "CARD_ON_FILE", "Purchase"},
-    .{"Netflix",          "NETFLIX.COM MELBOURNE",        "tv-and-music",            1899,  8,  "CARD_ON_FILE", "Purchase"},
-    .{"Aussie Broadband", "AUSSIE BROADBAND MORWELL",     "internet",                8900,  12, "CARD_ON_FILE", "Purchase"},
-    .{"Belong",           "BELONG MOBILE MELBOURNE",      "mobile-phone",            3500,  20, "CARD_ON_FILE", "Purchase"},
-    .{"Bupa",             "BUPA HEALTH INSURANCE",        "health-and-medical",      15120, 25, "",             "Direct Debit"},
-    .{"Strava",           "STRAVA INC SAN FRANCISCO",     "fitness-and-wellbeing",   1199,  17, "CARD_ON_FILE", "Purchase"},
+    .{"Spotify",          "SPOTIFY P2D4F8E1A2 STOCKHOLM", "tv-and-music",            1399,  3,  "CARD_ON_FILE", "Purchase", 0},
+    .{"Apple",            "APPLE.COM/BILL SYDNEY",        "apps-games-and-software", 449,   5,  "CARD_ON_FILE", "Purchase", 0},
+    .{"Netflix",          "NETFLIX.COM MELBOURNE",        "tv-and-music",            1899,  8,  "CARD_ON_FILE", "Purchase", 0},
+    .{"Aussie Broadband", "AUSSIE BROADBAND MORWELL",     "internet",                8900,  12, "CARD_ON_FILE", "Purchase", 0},
+    .{"Belong",           "BELONG MOBILE MELBOURNE",      "mobile-phone",            3500,  20, "CARD_ON_FILE", "Purchase", 0},
+    .{"Bupa",             "BUPA HEALTH INSURANCE",        "health-and-medical",      15120, 25, "",             "Direct Debit", 0},
+    .{"Strava",           "STRAVA INC SAN FRANCISCO",     "fitness-and-wellbeing",   1199,  17, "CARD_ON_FILE", "Purchase", 0},
+    .{"Apple",            "APPLE.COM/BILL SYDNEY",        "tv-and-music",            1299,  14, "CARD_ON_FILE", "Purchase", 0},   // Apple Music, beside iCloud.
+    .{"Canva",            "CANVA* SURRY HILLS",           "apps-games-and-software", 1650,  31, "CARD_ON_FILE", "Purchase", 0},
+    .{"Stan",             "STAN.COM.AU SYDNEY",           "tv-and-music",            1200,  22, "CARD_ON_FILE", "Purchase", 120},
 ];
 
 FRIENDS :: string.["Priya Nair", "Ben Okafor", "Mia Rossi", "Tom Nguyen"];
@@ -328,10 +334,14 @@ demo_generate :: () {
 
         // Subscriptions.
         for MONTHLY {
-            if date.day != it.day_of_month continue;
-            t := purchase(SPENDING, it.name, it.raw, it.category, it.amount, at(midnight, 4, 20), it.method, it.txn_type);
-            if t && it.name == "Spotify" && months_in > 14 { g_balances[SPENDING] += t.amount + 1499; t.amount = -1499; }
+            if date.day != min(cast(s64) it.day_of_month, days_in_month(month_key(date.year, date.month))) continue;
+            if it.ends_days_ago && day > demo.today - it.ends_days_ago continue;
+            price := it.amount;
+            if it.name == "Spotify" && months_in > 14 price = 1499;
+            if it.name == "Netflix" && day > demo.today - 40 price = 2299;   // Went up just now.
+            purchase(SPENDING, it.name, it.raw, it.category, price, at(midnight, 4, 20), it.method, it.txn_type);
         }
+        if (day - start) % 365 == 100 purchase(SPENDING, "Amazon Prime", "AMAZON PRIME AU SYDNEY", "tv-and-music", 7900, at(midnight, 6, 0), "CARD_ON_FILE", "Purchase");
         if (day - start) % 14 == 9 purchase(SPENDING, "Anytime Fitness", "ANYTIME FITNESS RICHMOND", "fitness-and-wellbeing", 3295, at(midnight, 5, 0), "", "Direct Debit");
 
         // Quarterly bills, paid from Spending after a top-up from Bills.
@@ -444,7 +454,11 @@ demo_generate :: () {
         }
     }
 
-    // Purchases from the last day and a half are still held.
+    // Purchases from the last day and a half are still held; there is always
+    // one, however quiet that day and a half was.
+    quiet := true;
+    for demo.txns if it.card_method.count && demo.now - it.created < 36 * 3600 { quiet = false; break; }
+    if quiet purchase(SPENDING, "Seven Seeds", "SEVEN SEEDS CARLTON", "restaurants-and-cafes", 550, demo.now - 3 * 3600, "CONTACTLESS", "Purchase");
     for * demo.txns {
         if it.card_method.count && demo.now - it.created < 36 * 3600 {
             it.held = true;
@@ -564,12 +578,14 @@ purchase :: (account: int, description: string, raw: string, category: string, c
             t.round_up = -total;
             t.boost = -boost;
             g_balances[SPENDING] -= total;
+            index := t - demo.txns.data;
             ru := new_txn(TRIP, created + 1);
             ru.description = "Round Up";
             ru.amount = total;
             ru.transfer = SPENDING;
             ru.txn_type = "Round Up";
             g_balances[TRIP] += total;
+            t = *demo.txns[index];   // Adding the Round Up may have moved it.
         }
     }
     return t;

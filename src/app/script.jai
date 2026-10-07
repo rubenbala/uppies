@@ -4,7 +4,7 @@
 //
 // Steps run in order, separated by ';':
 //   wait SECONDS      let the app run (animations, sample-data loading)
-//   page NAME         overview, transactions, accounts, spending, tags, webhooks, settings
+//   page NAME         overview, transactions, accounts, spending, recurring, tags, webhooks, settings
 //   shot PATH         save the next frame as a PNG
 //   pdf PATH          save the transaction open in the inspector as a PDF (no dialog)
 //   key NAME          press a key for one frame: DOWN, UP, ENTER, ESCAPE, TAB, F5, A..Z, 0..9

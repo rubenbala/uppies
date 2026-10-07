@@ -87,6 +87,119 @@ selftest :: () -> int {
         }
     }
 
+    // Recurring payments in the sample history: monthly subscriptions (one
+    // with a price rise, two from one merchant, one on the 31st, one
+    // cancelled), a yearly renewal, a fortnightly debit, quarterly bills that
+    // vary, rent, insurance, pay with a rise, a partner's weekly share; and
+    // none of the everyday shopping, eating out or paying friends back.
+    lt := platform_local_time();
+    today := floor_div(lt.utc_seconds + lt.offset_minutes * 60, SECONDS_PER_DAY);
+    rec: Recurring_State;
+    started := seconds_since_init();
+    recurring_compute(*rec, *store, today);
+    print("      % recurring series from % transactions in % ms\n", rec.series.count, store.transactions.count, formatFloat((seconds_since_init() - started) * 1000, trailing_width = 2));
+    for rec.series print("      recurring: % · % % · % · next % · %%\n", it.name, CADENCE_LABELS[it.cadence], RECURRING_KIND_LABELS[it.kind], format_money(it.amount),
+                         format_date(it.next_day), ifx it.active then "active" else "ended", ifx it.variable then " · varies" else "");
+    netflix := find_series(*rec, "Netflix");
+    check(netflix && netflix.cadence == .MONTHLY && netflix.kind == .SUBSCRIPTION && netflix.active && !netflix.variable
+          && civil_from_days(netflix.next_day).day == 8 && netflix.next_day >= today - 1 && netflix.next_day <= today + 31, "recurring: Netflix monthly, next on the 8th");
+    check(netflix && netflix.amount == -2299 && netflix.previous_amount == 1899 && recurring_recent_change(netflix, today), "recurring: Netflix's rise past the price groups joins them, and is recent");
+    if netflix check(rec.of_txn[rec.members[netflix.first + netflix.count - 1]] == netflix - rec.series.data, "recurring: a transaction knows its series");
+    spotify := find_series(*rec, "Spotify");
+    check(spotify && spotify.cadence == .MONTHLY && spotify.amount == -1499 && spotify.previous_amount == 1399, "recurring: Spotify's price rise continues it");
+    icloud := find_series(*rec, "Apple", 449);
+    music := find_series(*rec, "Apple", 1299);
+    check(icloud && music && icloud.cadence == .MONTHLY && music.cadence == .MONTHLY && icloud.id != music.id, "recurring: two subscriptions from Apple");
+    canva := find_series(*rec, "Canva");
+    if canva {
+        month := month_key_from_day(canva.next_day);
+        check(canva.cadence == .MONTHLY && canva.active && civil_from_days(canva.next_day).day == min(31, days_in_month(month)), tprint("recurring: on the 31st, or the month's last day (next %)", format_date(canva.next_day)));
+    } else check(false, "recurring: Canva found");
+    stan := find_series(*rec, "Stan");
+    check(stan && !stan.active, "recurring: Stan was cancelled");
+    prime := find_series(*rec, "Amazon Prime");
+    check(prime && prime.cadence == .YEARLY && prime.active && prime.amount == -7900, "recurring: Amazon Prime renews yearly");
+    gym := find_series(*rec, "Anytime Fitness");
+    check(gym && gym.cadence == .FORTNIGHTLY && gym.kind == .SUBSCRIPTION && gym.active, "recurring: the gym, fortnightly");
+    pay := find_series(*rec, "ACME Logistics");
+    check(pay && pay.kind == .INCOME && pay.cadence == .FORTNIGHTLY && pay.amount == 341280 && pay.previous_amount == 328450, "recurring: pay, fortnightly, with a rise");
+    agl := find_series(*rec, "AGL");
+    water := find_series(*rec, "Yarra Valley Water");
+    check(agl && water && agl.cadence == .QUARTERLY && water.cadence == .QUARTERLY && agl.kind == .BILL && agl.variable && water.variable, "recurring: quarterly bills that vary");
+    rent := find_series(*rec, "Ray White Richmond");
+    check(rent && rent.kind == .BILL && rent.cadence == .MONTHLY && rent.amount == -235000, "recurring: rent");
+    bupa := find_series(*rec, "Bupa");
+    check(bupa && bupa.kind == .BILL && bupa.cadence == .MONTHLY, "recurring: health insurance is a bill");
+    share := find_series(*rec, "Alex Morgan");
+    check(share && share.kind == .INCOME && share.cadence == .WEEKLY, "recurring: a partner's weekly share into 2Up");
+    stray: [..] string;
+    stray.allocator = temp;
+    for string.["Woolworths", "Coles", "Seven Seeds", "Uber Eats", "Uber", "DiDi", "Domino's", "The Iconic", "Steam", "Ticketek",
+                "Interest", "Round Up", "Cashback", "Priya Nair", "Ben Okafor", "Mia Rossi", "Tom Nguyen"] {
+        if find_series(*rec, it) array_add(*stray, it);
+    }
+    check(!stray.count, tprint("recurring: nothing found in everyday spending (found: %)", stray));
+    check(rec.subscriptions_monthly > 0 && rec.bills_monthly > 0 && rec.income_monthly > 0, tprint("recurring: monthly totals (subscriptions %, bills %, income %)",
+          format_money(rec.subscriptions_monthly), format_money(rec.bills_monthly), format_money(rec.income_monthly)));
+
+    // Edge cases, on a made-up history.
+    {
+        made_up: Store;
+        array_add(*made_up.accounts, .{id = "account", name = "Spending", type = .TRANSACTIONAL});
+        on :: (s: *Store, name: string, year: int, month: int, day: int, cents: s64, method := Card_Method.CARD_ON_FILE) {
+            t := array_add(*s.transactions);
+            t.id = name;
+            t.description = name;
+            t.amount = -cents;
+            t.day = cast(s32) days_from_civil(year, month, day);
+            t.month = month_key_from_day(t.day);
+            t.account = 0;
+            t.categorizable = true;
+            t.card_method = method;
+            t.transaction_type = "Purchase";
+        }
+        for string.["Jan 31", "Feb 28", "Mar 31", "Apr 30", "May 31"] on(*made_up, "Month End", 2025, it_index + 1, ifx it_index == 1 then 28 else ifx it_index == 3 then 30 else 31, 999);
+        for int.[1, 2, 4, 5, 6] on(*made_up, "Skipped", 2025, it, 5, 1500);
+        on(*made_up, "Renewal", 2023, 7, 1, 9900);
+        on(*made_up, "Renewal", 2024, 7, 2, 9900);
+        on(*made_up, "Yearly Shop", 2023, 8, 1, 4500, .ECOMMERCE);
+        on(*made_up, "Yearly Shop", 2024, 8, 1, 4500, .ECOMMERCE);
+        for int.[11, 12] on(*made_up, "Cancelled", 2024, it, 15, 800);
+        for int.[1, 2] on(*made_up, "Cancelled", 2025, it, 15, 800);
+        every :: (s: *Store, name: string, year: int, month: int, day: int, days: int, count: int, cents: s64, method := Card_Method.CARD_ON_FILE) {
+            for 0..count - 1 {
+                c := civil_from_days(days_from_civil(year, month, day) + it * days);
+                on(s, name, c.year, c.month, c.day, cents, method);
+            }
+        }
+        every(*made_up, "Cafe", 2025, 4, 28, 7, 6, 450, .CONTACTLESS);
+        every(*made_up, "Weekly", 2025, 4, 21, 7, 6, 1000, .ECOMMERCE);
+        every(*made_up, "Four Weekly", 2025, 2, 3, 28, 5, 2000);
+        on(*made_up, "Random", 2025, 2, 1, 3000, .ECOMMERCE);
+        on(*made_up, "Random", 2025, 2, 10, 3000, .ECOMMERCE);
+        on(*made_up, "Random", 2025, 3, 22, 3000, .ECOMMERCE);
+        quick_sort(made_up.transactions, (a: Transaction, b: Transaction) -> int { return b.day - a.day; });
+        made_up_today := days_from_civil(2025, 6, 10);
+        out: Recurring_State;
+        recurring_compute(*out, *made_up, made_up_today);
+        for out.series print("      made up: % · % · next % · % missed · %\n", it.name, CADENCE_LABELS[it.cadence], format_date(it.next_day), it.missed, ifx it.active then "active" else "ended");
+        month_end := find_series(*out, "Month End");
+        check(month_end && month_end.cadence == .MONTHLY && month_end.next_day == days_from_civil(2025, 6, 30), "recurring: month-end charges, next on 30 Jun");
+        skipped := find_series(*out, "Skipped");
+        check(skipped && skipped.cadence == .MONTHLY && skipped.missed == 1 && skipped.active, "recurring: one missed month is still monthly");
+        renewal := find_series(*out, "Renewal");
+        check(renewal && renewal.cadence == .YEARLY && renewal.active && renewal.next_day == days_from_civil(2025, 7, 2), "recurring: a yearly renewal from two charges on file");
+        check(!find_series(*out, "Yearly Shop"), "recurring: two online purchases a year apart aren't a renewal");
+        cancelled := find_series(*out, "Cancelled");
+        check(cancelled && !cancelled.active, "recurring: stopped months ago");
+        check(!find_series(*out, "Cafe"), "recurring: bought in person is never a subscription");
+        weekly := find_series(*out, "Weekly");
+        check(weekly && weekly.cadence == .WEEKLY, "recurring: weekly");
+        four := find_series(*out, "Four Weekly");
+        check(four && four.cadence == .FOUR_WEEKLY, "recurring: every four weeks, not monthly");
+        check(!find_series(*out, "Random"), "recurring: three purchases at odd gaps aren't a series");
+    }
+
     // JSON edge cases. BS is a backslash, so the escapes reach the parser.
     BS :: "\\";
     text := tprint("{\"a\":\"%1u00e9%1ud83d%1ude00 %1\" %1n\",\"b\":[1,-2.5e2,true,null],\"c\":9007199254740993}", BS);
@@ -272,6 +385,12 @@ selftest :: () -> int {
 }
 
 #scope_file
+
+// The first series from this merchant (and, given one, at this amount).
+find_series :: (r: *Recurring_State, name: string, amount: s64 = 0) -> *Recurring_Series {
+    for * r.series if it.name == name && (!amount || abs(it.amount) == amount) return it;
+    return null;
+}
 
 // Follows startxref to the cross-reference table and checks that each entry
 // lands on "N 0 obj": what a PDF reader needs to find anything.

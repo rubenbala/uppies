@@ -161,6 +161,17 @@ draw_inspector :: (r: Rect, st: *Inspector_State, index: s32) -> bool {
         y += px(36);
     }
 
+    // The recurring series it belongs to.
+    series := recurring_series_of(index);
+    if series && !series.hidden {
+        section("Recurring", *y, x, w, RECURRING_KIND_LABELS[series.kind]);
+        text := recurring_amount_text(series);
+        if series.active text = tprint("% · next %", text, format_weekday_date(series.next_day, app.today));
+        else text = tprint("% · ended %", text, format_date(series.last_day));
+        if ui_link(tprint("%##inspector-recurring", text), rect(x, y, w, px(18))) show_recurring(series.id);
+        y += px(28);
+    }
+
     // Merchant history.
     if st.merchant_count > 1 && t.categorizable {
         avg := st.merchant_total / max(st.merchant_count, 1);
