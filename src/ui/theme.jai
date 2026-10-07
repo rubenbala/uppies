@@ -194,6 +194,7 @@ Icon :: enum u32 {
     GLOBE          :: 0xE774;
     NOTE           :: 0xE70B;
     PRINT          :: 0xE749;
+    DOWNLOAD       :: 0xE896;
 }
 
 #if OS == .MACOS {
@@ -240,5 +241,6 @@ Icon :: enum u32 {
         .{.GLOBE,         0x25CE},   // ◎
         .{.NOTE,          0x2261},   // ≡
         .{.PRINT,         0x2399},   // ⎙
+        .{.DOWNLOAD,      0x2913},   // ⤓
     ];
 }

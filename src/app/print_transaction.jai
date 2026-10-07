@@ -11,8 +11,7 @@
 save_transaction_pdf :: (index: s32) {
     if index < 0 || index >= store.transactions.count return;
     t := *store.transactions[index];
-    d := civil_from_days(t.day);
-    name := print_file_name("Transaction", t.description, tprint("%-%-%", d.year, pad2(d.month), pad2(d.day)));
+    name := print_file_name("Transaction", t.description, format_date_iso(t.day));
     print_save(print_transaction_pdf(index), name);
 }
 
@@ -102,6 +101,24 @@ print_statement_pdf :: (indices: [] s32) -> string {
     return print_finish(*doc);
 }
 
+// The transactions by when they happened, oldest first. The store keeps
+// them newest first.
+oldest_first :: (indices: [] s32) -> [] s32 {
+    sorted := array_copy(indices,, temp);
+    quick_sort(sorted, (a: s32, b: s32) -> int { return b - a; });
+    return sorted;
+}
+
+// "2026-07-01 to 2026-10-07", or the one day they're all from: for file names.
+date_range_name :: (indices: [] s32) -> string {
+    first, last := store.transactions[indices[0]].day, store.transactions[indices[0]].day;
+    for indices {
+        first = min(first, store.transactions[it].day);
+        last  = max(last, store.transactions[it].day);
+    }
+    return ifx first == last then format_date_iso(first) else tprint("% to %", format_date_iso(first), format_date_iso(last));
+}
+
 #scope_file
 
 // The transaction's pages, from where the document is up to.
@@ -155,26 +172,4 @@ print_transaction :: (doc: *Print_Doc, index: s32) {
     else             print_field(doc, "Settled", "Not yet", color = PRINT_HELD);
     if t.attachment_id.count print_field(doc, "Receipt", "Attached in Up");
     print_field(doc, "Transaction ID", t.id, mono = true);
-}
-
-// The transactions by when they happened, oldest first. The store keeps
-// them newest first.
-oldest_first :: (indices: [] s32) -> [] s32 {
-    sorted := array_copy(indices,, temp);
-    quick_sort(sorted, (a: s32, b: s32) -> int { return b - a; });
-    return sorted;
-}
-
-// "2026-07-01 to 2026-10-07", or the one day they're all from.
-date_range_name :: (indices: [] s32) -> string {
-    first, last := store.transactions[indices[0]].day, store.transactions[indices[0]].day;
-    for indices {
-        first = min(first, store.transactions[it].day);
-        last  = max(last, store.transactions[it].day);
-    }
-    iso :: (day: s64) -> string {
-        d := civil_from_days(day);
-        return tprint("%-%-%", d.year, pad2(d.month), pad2(d.day));
-    }
-    return ifx first == last then iso(first) else tprint("% to %", iso(first), iso(last));
 }

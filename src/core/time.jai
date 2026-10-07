@@ -140,6 +140,12 @@ format_date :: (day: s64) -> string {
     return tprint("% % %", d.day, MONTH_SHORT[d.month - 1], d.year);
 }
 
+// "2026-10-06"
+format_date_iso :: (day: s64) -> string {
+    d := civil_from_days(day);
+    return tprint("%-%-%", d.year, pad2(d.month), pad2(d.day));
+}
+
 // "06 Oct" (fixed width, for table columns)
 format_date_column :: (day: s64) -> string {
     d := civil_from_days(day);

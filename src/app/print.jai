@@ -244,7 +244,13 @@ print_finish :: (doc: *Print_Doc) -> string {
 // Asks where to save the PDF (the Save dialog) and writes it there, saying
 // how it went in a toast.
 print_save :: (bytes: string, suggested_name: string) {
-    path, chosen := platform_save_file_dialog("Save as PDF", suggested_name, "PDF document", "pdf");
+    save_with_dialog(bytes, suggested_name, "Save as PDF", "PDF document", "pdf");
+}
+
+// The same for any kind of file: `type_name` and `extension` ("CSV
+// document", "csv") describe it to the Save dialog.
+save_with_dialog :: (bytes: string, suggested_name: string, title: string, type_name: string, extension: string) {
+    path, chosen := platform_save_file_dialog(title, suggested_name, type_name, extension);
     if !chosen return;
     name := path_filename(path);
     if platform_write_file_atomic(path, cast([] u8) bytes) app_toast(.SUCCESS, tprint("Saved %.", name));
@@ -254,6 +260,11 @@ print_save :: (bytes: string, suggested_name: string) {
 // A file name from its parts, "Transaction - Coles - 2026-10-06.pdf",
 // without the characters Windows doesn't allow in names.
 print_file_name :: (parts: .. string) -> string {
+    return file_name_from_parts("pdf", ..parts);
+}
+
+// The same with another extension: "csv".
+file_name_from_parts :: (extension: string, parts: .. string) -> string {
     cleaned: [..] string;
     cleaned.allocator = temp;
     for part: parts {
@@ -281,7 +292,7 @@ print_file_name :: (parts: .. string) -> string {
         while i < name.count && i <= 120 { end = i; next_code_point(name, *i); }
         name = trim_right(slice(name, 0, end), " .-");
     }
-    return tprint("%.pdf", ifx name.count then name else "Uppies");
+    return tprint("%.%", ifx name.count then name else "Uppies", extension);
 }
 
 // "+11:00", "-03:30".

@@ -370,14 +370,16 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
     field("Account", ifx several_accounts then "Several" else account_name(*store, accounts), *y, x, w);
     y += px(8);
 
-    // Saving them as a PDF, two ways. The Save dialog blocks until it
-    // closes; the frame carries on after.
-    section("Save as PDF", *y, x, w);
+    // Saving them: as a PDF two ways, or as a CSV for a spreadsheet. The
+    // Save dialog blocks until it closes; the frame carries on after.
+    section("Export", *y, x, w);
     buttons := rect(x, y, w, px(30));
     statement_r := cut_left(*buttons, (w - px(8)) * 0.5);
     cut_left(*buttons, px(8));
-    if ui_button("Statement##bulk-print", statement_r, .SECONDARY, .PRINT, tooltip = "One list of them all: date, description and amount, with the total") save_statement_pdf(indices);
-    if ui_button("Each in full##bulk-print", buttons, .SECONDARY, .PRINT, tooltip = "Each on its own page, as when saving one transaction") save_transactions_pdf(indices);
+    if ui_button("Statement PDF##bulk-print", statement_r, .SECONDARY, .PRINT, tooltip = "One list of them all: date, description and amount, with the total") save_statement_pdf(indices);
+    if ui_button("Full pages PDF##bulk-print", buttons, .SECONDARY, .PRINT, tooltip = "Each on its own page, as when saving one transaction") save_transactions_pdf(indices);
+    y += px(38);
+    if ui_button("Spreadsheet CSV##bulk-csv", rect(x, y, w, px(30)), .SECONDARY, .DOWNLOAD, tooltip = "A row for each, with everything Up says about it, for a spreadsheet or accounting software") save_transactions_csv(indices);
     y += px(36);
     draw_text_fit(fonts.regular, px(theme.font_size_small), rect(x, y, w, px(14)), "Oldest first, in one file.", theme.text_faint);
     y += px(26);

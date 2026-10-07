@@ -70,6 +70,7 @@ FT :: #import "freetype";
 #load "app/inspector.jai";
 #load "app/print.jai";
 #load "app/print_transaction.jai";
+#load "app/transactions_csv.jai";
 #load "app/page_overview.jai";
 #load "app/page_transactions.jai";
 #load "app/page_accounts.jai";

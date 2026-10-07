@@ -227,6 +227,16 @@ selftest :: () -> int {
     check(begins_with(pdf, "%PDF-1.4\n") && pdf_cross_references_ok(pdf), tprint("statement of % transactions (% bytes)", several.count, pdf.count));
     pdf = print_transactions_pdf(.[several[0], several[1], several[2]]);
     check(begins_with(pdf, "%PDF-1.4\n") && pdf_cross_references_ok(pdf) && contains(pdf, "Page 3 of"), tprint("three transactions, a page or more each (% bytes)", pdf.count));
+    // A CSV of them: a header row and a row each, quoting what needs it and
+    // keeping text that looks like a formula from being run as one.
+    saved_note := store.transactions[several[0]].note;
+    store.transactions[several[0]].note = "=SUM(1,2) said \"hi\"";
+    csv := transactions_csv(.[several[0], several[1], several[2]]);
+    store.transactions[several[0]].note = saved_note;
+    csv_lines := split(csv, "\r\n",, temp);
+    check(begins_with(csv, "\xEF\xBB\xBFDate,Time,Description,Amount (AUD),") && csv_lines.count == 5 && csv_lines[4] == "", tprint("CSV has a header and a row each (% lines)", csv_lines.count - 1));
+    check(contains(csv, ",\"'=SUM(1,2) said \"\"hi\"\"\","), "CSV quotes commas and quotes, and defuses formulas");
+    check(contains(csv_lines[1], tprint(",%,", format_date_iso(store.transactions[several[2]].day))) || begins_with(csv_lines[1], format_date_iso(store.transactions[several[2]].day)), "CSV rows are oldest first");
     long: Print_Doc;
     print_begin(*long, "Test", "Long document");
     for 1..90 print_field(*long, tprint("Field %", it), "A value long enough that it has to wrap onto a second line in the value column of the page.");
