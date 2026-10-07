@@ -41,8 +41,14 @@ renderer_shutdown :: () {
     d3d = .{};
 }
 
+// One wait per present. A second wait before presenting would block on a
+// frame that was never queued, for the whole timeout: that happens when
+// Win32's modal move loop starts (and draws frames) between the main loop's
+// wait and its present. Until the next present, waiting again does nothing.
 renderer_wait_for_frame :: () {
+    if d3d.frame_waited return;
     if d3d.frame_waitable WaitForSingleObjectEx(d3d.frame_waitable, 1000, 1);
+    d3d.frame_waited = true;
 }
 
 renderer_render :: (clear: Color) {
@@ -100,6 +106,7 @@ renderer_render :: (clear: Color) {
 }
 
 renderer_present :: () {
+    d3d.frame_waited = false;
     if !d3d.swap_chain return;
     hr: HRESULT;
     if renderer_settings.vsync {
@@ -169,6 +176,7 @@ D3D_State :: struct {
     swap_chain:  *IDXGISwapChain1;
     swap_chain2: *IDXGISwapChain2;
     frame_waitable: HANDLE;
+    frame_waited:   bool;   // Waited on frame_waitable, not presented since.
     swap_chain_flags: u32;
     tearing_supported: bool;
 

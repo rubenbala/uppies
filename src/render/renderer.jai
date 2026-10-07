@@ -3,7 +3,9 @@
 //   renderer_init() -> bool              after platform_init
 //   renderer_shutdown()
 //   renderer_wait_for_frame()            blocks until the display can take a
-//                                        new frame (lowest-latency pacing)
+//                                        new frame (lowest-latency pacing);
+//                                        does nothing if already waited
+//                                        and not presented since
 //   renderer_render(clear: Color)        draws `draw.instances`
 //   renderer_present()
 //

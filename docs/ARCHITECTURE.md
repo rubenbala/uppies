@@ -53,7 +53,9 @@ identical at 60 Hz and 360 Hz.
 
 Win32 runs a modal loop while the window is dragged or resized. During it, a timer and
 `WM_SIZE` call `platform.modal_frame`, so content keeps animating and redraws at the new
-size live.
+size live. The loop can start inside step 4's pump, after the main loop has waited, so a wait
+not yet followed by a present is never repeated (it would block until the timeout), and the
+main loop waits again before `run_frame` if the modal loop presented in between.
 
 ## Rendering
 

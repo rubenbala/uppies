@@ -196,6 +196,9 @@ main :: () {
         // chain's latency budget drifts.
         renderer_wait_for_frame();
         platform_pump_events();   // Input that arrived while waiting makes this frame.
+        // A modal loop entered during the pump (the window being dragged)
+        // may have drawn and presented frames itself: wait again if so.
+        renderer_wait_for_frame();
         run_frame();
 
         if !renderer_settings.vsync && app.max_fps > 0 {
