@@ -65,7 +65,7 @@ TXN_COLUMNS :: Column.[
 ];
 
 // Shows the transactions page with filters that pick out one set.
-CUSTOM_PERIOD :: 7;
+CUSTOM_PERIOD :: PERIOD_LABELS.count;
 
 show_transactions :: (category := -1, period := 0, status := 0, tag: s32 = -1, select_id := "", account := -1, custom := Period.{}, search := "") {
     st := *app.txn;

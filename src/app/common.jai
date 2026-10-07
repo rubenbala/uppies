@@ -52,7 +52,13 @@ account_filter_items :: () -> [] Dropdown_Item, [] s32 {
     return items, map;
 }
 
-PERIOD_LABELS :: string.["All time", "This month", "Last month", "Last 30 days", "Last 90 days", "This year", "Last 12 months"];
+PERIOD_LABELS :: string.["All time", "This month", "Last month", "Last 30 days", "Last 90 days", "This year", "Last 12 months", "Current financial year", "Last financial year"];
+
+// First day of the Australian financial year (1 July) containing day.
+financial_year_start :: (day: s64) -> s64 {
+    d := civil_from_days(day);
+    return days_from_civil(ifx d.month >= 7 then d.year else d.year - 1, 7, 1);
+}
 
 // The period for a PERIOD_LABELS index; ok = false for "All time".
 period_from_index :: (index: int, today: s64) -> Period, bool {
@@ -64,6 +70,8 @@ period_from_index :: (index: int, today: s64) -> Period, bool {
         case 4; return .{today - 89, today}, true;
         case 5; return .{days_from_civil(civil_from_days(today).year, 1, 1), today}, true;
         case 6; return .{today - 364, today}, true;
+        case 7; return .{financial_year_start(today), today}, true;
+        case 8; fy := financial_year_start(today); return .{financial_year_start(fy - 1), fy - 1}, true;
     }
     return .{}, false;
 }

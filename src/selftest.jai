@@ -196,6 +196,22 @@ selftest :: () -> int {
     whole := month_period(oct - 1);
     before = comparison_period(whole);
     check(before.first == days_from_civil(2026, 8, 1) && before.last == days_from_civil(2026, 8, 31), tprint("whole month compares with the month before: %", period_label(before)));
+
+    // Financial-year periods (1 July – 30 June).
+    fy_check :: (today: s64, index: int, first: s64, last: s64, what: string) #expand {
+        p, has := period_from_index(index, today);
+        check(has && p.first == first && p.last == last, tprint("%: % – %", what, format_date(p.first), format_date(p.last)));
+    }
+    oct7 := days_from_civil(2026, 10, 7);
+    fy_check(oct7, 7, days_from_civil(2026, 7, 1), oct7, "current financial year after July");
+    fy_check(oct7, 8, days_from_civil(2025, 7, 1), days_from_civil(2026, 6, 30), "last financial year after July");
+    mar15 := days_from_civil(2026, 3, 15);
+    fy_check(mar15, 7, days_from_civil(2025, 7, 1), mar15, "current financial year before July");
+    fy_check(mar15, 8, days_from_civil(2024, 7, 1), days_from_civil(2025, 6, 30), "last financial year before July");
+    jul1 := days_from_civil(2026, 7, 1);
+    fy_check(jul1, 7, jul1, jul1, "financial year starts on 1 July");
+    jun30 := days_from_civil(2026, 6, 30);
+    fy_check(jun30, 7, days_from_civil(2025, 7, 1), jun30, "financial year ends on 30 June");
     check(format_change_percent(2000, 100) == "×20", tprint("big increases read as multiples: %", format_change_percent(2000, 100)));
 
     // Printing: a transaction makes a well-formed PDF, and so does a
