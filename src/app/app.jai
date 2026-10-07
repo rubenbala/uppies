@@ -26,6 +26,7 @@ Toast :: struct {
     life: float;
     t:    float;
     leaving: bool;
+    undo:    u32;    // An undo step its Undo button reverses, while it is the latest.
 }
 
 Confirm_Kind :: enum u8 { NONE; DELETE_WEBHOOK; DISCONNECT; DELETE_LOCAL_DATA; }
@@ -138,12 +139,13 @@ app_frame :: () {
     app.was_animating = ui.animating;
 }
 
-app_toast :: (kind: Toast_Kind, text: string) {
+app_toast :: (kind: Toast_Kind, text: string, undo: u32 = 0) {
     // The same message twice in a row just refreshes the first.
-    for * app.toasts if it.text == text && !it.leaving { it.born = ui.time; return; }
+    for * app.toasts if it.text == text && !it.leaving { it.born = ui.time; it.undo = undo; return; }
     t := array_add(*app.toasts);
     t.kind = kind;
     t.text = copy_string(text);
+    t.undo = undo;
     t.born = ui.time;
     t.life = ifx kind == .ERROR then 7.0 else 4.0;
     if app.toasts.count > 4 app.toasts[0].leaving = true;
@@ -208,6 +210,7 @@ handle_hotkeys :: () {
             select_page(cast(Page) next);
         }
         if letter_pressed(#char "R") sync_refresh(true);
+        if letter_pressed(#char "Z") && !typing && !shift_down() undo_last();
         if letter_pressed(#char "F") {
             select_page(.TRANSACTIONS);
             app.txn.focus_search = true;
@@ -525,7 +528,9 @@ draw_toasts :: (full: Rect) {
         }
         if !t.leaving ui_wake_at(t.born + t.life);
         e := ease_out_cubic(t.t);
-        lines := wrap_lines(fonts.regular, px(theme.font_size_body), t.text, width - px(44));
+        can_undo := t.undo && t.undo == undo_latest() && !t.leaving;
+        undo_w := ifx can_undo then px(56) else 0.0;
+        lines := wrap_lines(fonts.regular, px(theme.font_size_body), t.text, width - px(44) - undo_w);
         h := px(18) * lines.count + px(18);
         y -= h * e + px(8) * e;
         box := snap(rect(full.x + full.w - width - px(14) + px(24) * (1 - e), y, width, h));
@@ -543,6 +548,14 @@ draw_toasts :: (full: Rect) {
         }
         id := ui_id("toast", cast(int) (t.born * 1000));
         ui.in_overlay = true;
+        if can_undo {
+            // Before the toast's own click (dismiss), so a press here is the button's.
+            undo_r := rect(box.x + box.w - undo_w - px(6), box.y + (box.h - px(24)) * 0.5, undo_w, px(24));
+            if ui_button(tprint("Undo##toast-%", t.undo), undo_r, .GHOST, tooltip = tprint("Undo (%)", shortcut("Z"))) {
+                undo_last(t.undo);
+                t.leaving = true;
+            }
+        }
         io := ui_interact(id, box);
         ui.in_overlay = false;
         if io.hovered { t.born = ui.time - min(age, cast(float64) t.life - 1.5); ui.cursor = .HAND; }

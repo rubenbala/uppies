@@ -25,7 +25,8 @@
 // Each connection is a generation: replies to an older one are dropped.
 // Transient failures (network, 429, 5xx) retry with backoff; a 401 stops
 // everything and asks for a new token. Writes (category, tags) apply at
-// once and are rolled back if the API refuses them.
+// once, are rolled back if the API refuses them, and can be undone
+// (undo.jai).
 
 Sync_Phase :: enum u8 { OFFLINE; CONNECTING; LOADING; READY; }
 Refresh_Kind :: enum u8 { RECENT; CATCH_UP; FULL; }
@@ -105,6 +106,7 @@ Write_Batch :: struct {
     done:    string;   // Heap: the toast when they all succeed.
     failure: string;   // Heap: how the toast starts when some fail.
     error:   string;   // Heap: why the first one failed.
+    undo:    u32;      // The undo step of its writes, for the toast's Undo button.
 }
 
 sync: Sync;
@@ -226,6 +228,7 @@ sync_set_category :: (txn_index: s32, category: s32) {
     if previous == category return;
     body := ifx category >= 0 then tprint("{\"data\":{\"type\":\"categories\",\"id\":\"%\"}}", store.categories[category].id) else "{\"data\":null}";
     store_set_category(*store, txn_index, category);
+    undo_note(.CATEGORY, t.id, ifx previous >= 0 then store.categories[previous].id else "", ifx category >= 0 then store.categories[category].id else "");
     note_edit(t.id);
     sync.pending_writes += 1;
     api_submit(.SET_CATEGORY, "PATCH", tprint("/transactions/%/relationships/category", t.id), body, ref = t.id, arg = ifx previous >= 0 then store.categories[previous].id else "", arg_int = category, urgent = true, batch = join_batch());
@@ -238,6 +241,7 @@ sync_add_tag :: (txn_index: s32, label: string) {
     tag := store_intern_tag(*store, label);
     if txn_has_tag(t, tag) return;
     store_add_tag(*store, txn_index, tag);
+    undo_note(.ADD_TAG, t.id, "", label);
     note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
@@ -249,6 +253,7 @@ sync_remove_tag :: (txn_index: s32, tag: s32) {
     t := *store.transactions[txn_index];
     label := store.tags[tag].label;
     store_remove_tag(*store, txn_index, tag);
+    undo_note(.REMOVE_TAG, t.id, "", label);
     note_edit(t.id);
     sync.pending_writes += 1;
     body := tprint("{\"data\":[{\"type\":\"tags\",\"id\":\"%\"}]}", json_escape(label));
@@ -258,7 +263,9 @@ sync_remove_tag :: (txn_index: s32, tag: s32) {
 // Groups the writes made until sync_batch_end into one toast, shown when the
 // last of them is answered: `done` when they all succeed, otherwise `failure`
 // with how many failed and why. (On their own, writes only report failures.)
+// The batch is one undo step, and its toast can undo it.
 sync_batch_begin :: () {
+    undo_begin();
     sync.batch_next += 1;
     b := array_add(*sync.batches);
     b.id = sync.batch_next;
@@ -268,8 +275,10 @@ sync_batch_begin :: () {
 sync_batch_end :: (done: string, failure: string) {
     b, index := find_batch(sync.batch_open);
     sync.batch_open = 0;
+    step := undo_end(done);
     if !b return;
     b.closed = true;
+    b.undo = step;
     b.done = copy_string(done);
     b.failure = copy_string(failure);
     finish_batch(index);
@@ -388,6 +397,7 @@ sync_reset_data :: () {
     for * sync.refresh_batch free_transaction(it);
     sync.refresh_batch.count = 0;
     clear_edits();
+    undo_clear();
     sync.from_saved = false;
     sync.catch_up_at = 0;
     sync.last_full_check_utc = 0;
@@ -889,8 +899,8 @@ batch_reply :: (req: *Api_Request, ok: bool) -> bool {
 finish_batch :: (index: int) {
     b := *sync.batches[index];
     if !b.closed || b.pending > 0 return;
-    if b.failed app_toast(.ERROR, tprint("%: % of % failed. %", b.failure, b.failed, b.total, b.error));
-    else if b.done.count app_toast(.SUCCESS, b.done);
+    if b.failed app_toast(.ERROR, tprint("%: % of % failed. %", b.failure, b.failed, b.total, b.error), undo = ifx b.failed < b.total then b.undo else 0);
+    else if b.done.count app_toast(.SUCCESS, b.done, undo = b.undo);
     free(b.done); free(b.failure); free(b.error);
     array_ordered_remove_by_index(*sync.batches, index);
 }

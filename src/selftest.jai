@@ -200,6 +200,53 @@ selftest :: () -> int {
         check(!find_series(*out, "Random"), "recurring: three purchases at odd gaps aren't a series");
     }
 
+    // Undo: a step's edits still in place are reversed, newest first; one put
+    // back since (its write failed) is left alone. A write on its own is a
+    // step of its own.
+    {
+        groceries := store_find_category(*store, "groceries");
+        picks: [..] s32;
+        picks.allocator = temp;
+        for store.transactions {
+            if picks.count == 2 break;
+            if it.categorizable && it.category >= 0 && it.category != groceries && it.tag_count < MAX_TAGS array_add(*picks, cast(s32) it_index);
+        }
+        if picks.count == 2 {
+            first, second := picks[0], picks[1];
+            original_first, original_second := store.transactions[first].category, store.transactions[second].category;
+            undo_clear();
+            undo_begin();
+            for picks {
+                t := *store.transactions[it];
+                before := store.categories[t.category].id;
+                store_set_category(*store, it, groceries);
+                undo_note(.CATEGORY, t.id, before, "groceries");
+            }
+            tag := store_intern_tag(*store, "Undo test");
+            store_add_tag(*store, first, tag);
+            undo_note(.ADD_TAG, store.transactions[first].id, "", "Undo test");
+            step := undo_end("Moved 2 transactions to Groceries.");
+            check(step != 0 && step == undo_latest(), "undo: a batch of writes is one step");
+            store_set_category(*store, second, original_second);   // Its write failed: put back.
+            plan := undo_plan(*undo.steps[undo.steps.count - 1]);
+            check(plan.count == 2 && plan[0].kind == .ADD_TAG && plan[0].tag == tag && plan[1].kind == .CATEGORY && plan[1].index == first && plan[1].category == original_first,
+                  tprint("undo: reverses what is still in place, newest first (% of 3)", plan.count));
+            store_remove_tag(*store, first, tag);
+            store_set_category(*store, first, original_first);
+            check(!undo_plan(*undo.steps[undo.steps.count - 1]).count, "undo: nothing to reverse once it's all been changed back");
+
+            before := store.categories[original_first].id;
+            store_set_category(*store, first, groceries);
+            undo_note(.CATEGORY, store.transactions[first].id, before, "groceries");
+            single := *undo.steps[undo.steps.count - 1];
+            check(undo.steps.count == 2 && single.edits.count == 1 && single.label == tprint("Moved % to Groceries.", store.transactions[first].description),
+                  tprint("undo: a write on its own is its own step (\"%\")", single.label));
+            store_set_category(*store, first, original_first);
+            undo_clear();
+            check(!undo_latest(), "undo: cleared with the data");
+        } else check(false, "undo: two categorised transactions to try it on");
+    }
+
     // JSON edge cases. BS is a backslash, so the escapes reach the parser.
     BS :: "\\";
     text := tprint("{\"a\":\"%1u00e9%1ud83d%1ude00 %1\" %1n\",\"b\":[1,-2.5e2,true,null],\"c\":9007199254740993}", BS);

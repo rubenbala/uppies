@@ -123,6 +123,7 @@ Scripted and timed runs never read or write the saved token or settings.
 | ↑ ↓ PgUp PgDn Home End  | Move through the focused table                |
 | Ctrl+click, Shift+click | Choose several transactions, to recategorise or tag them together, or several accounts, to add them together |
 | Ctrl+P                  | Save the transaction in the inspector as a PDF |
+| Ctrl+Z                  | Undo the last category or tag change (also the Undo button on its message) |
 | Esc                     | Close a menu, clear a search, close the inspector |
 | Tab / Shift+Tab         | Move keyboard focus; Enter or Space activates |
 
