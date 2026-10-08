@@ -25,7 +25,7 @@ Edit :: struct {
 
 Undo_Step :: struct {
     id:    u32;
-    label: string;    // Heap: what was done, as a toast says it ("Moved 3 transactions to Groceries.").
+    label: string;    // Heap: what was done, as a toast says it ("3 transactions categorised as Groceries.").
     edits: [..] Edit;
 }
 
@@ -180,7 +180,7 @@ drop_step :: (index: int) {
     array_ordered_remove_by_index(*undo.steps, index);
 }
 
-// What a write on its own did: "Moved Netflix to Groceries.", "Tagged Netflix \"Work\"."
+// What a write on its own did: "Netflix categorised as Groceries.", "Tagged Netflix \"Work\"."
 single_label :: (kind: Edit_Kind, txn_id: string, after: string) -> string {
     index := store_find_transaction(*store, txn_id);
     name := ifx index >= 0 then store.transactions[index].description else "a transaction";
@@ -188,7 +188,7 @@ single_label :: (kind: Edit_Kind, txn_id: string, after: string) -> string {
         case .CATEGORY;
             category := store_find_category(*store, after);
             if category < 0 return tprint("Took % out of its category.", name);
-            return tprint("Moved % to %.", name, store.categories[category].name);
+            return tprint("% categorised as %.", name, store.categories[category].name);
         case .ADD_TAG;
             return tprint("Tagged % \"%\".", name, after);
     }

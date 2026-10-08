@@ -301,10 +301,10 @@ draw_bulk_inspector :: (r: Rect, st: *Inspector_State, indices: [] s32) -> bool 
                     moved += 1;
                 }
                 name := ifx category >= 0 then store.categories[category].name else "Uncategorised";
-                message := ifx category >= 0 then tprint("Moved % to %.", format_count(moved, "transaction", "transactions"), name)
+                message := ifx category >= 0 then tprint("% categorised as %.", format_count(moved, "transaction", "transactions"), name)
                            else tprint("Took % out of their categories.", format_count(moved, "transaction", "transactions"));
                 if uncategorizable message = tprint("% % skipped: not categorisable.", message, uncategorizable);
-                sync_batch_end(message, ifx category >= 0 then tprint("Not all moved to %", name) else "Not all taken out of their categories");
+                sync_batch_end(message, ifx category >= 0 then tprint("Not all categorised as %", name) else "Not all taken out of their categories");
             }
         }
         y += px(30);

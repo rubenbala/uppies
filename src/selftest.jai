@@ -225,7 +225,7 @@ selftest :: () -> int {
             tag := store_intern_tag(*store, "Undo test");
             store_add_tag(*store, first, tag);
             undo_note(.ADD_TAG, store.transactions[first].id, "", "Undo test");
-            step := undo_end("Moved 2 transactions to Groceries.");
+            step := undo_end("2 transactions categorised as Groceries.");
             check(step != 0 && step == undo_latest(), "undo: a batch of writes is one step");
             store_set_category(*store, second, original_second);   // Its write failed: put back.
             plan := undo_plan(*undo.steps[undo.steps.count - 1]);
@@ -239,7 +239,7 @@ selftest :: () -> int {
             store_set_category(*store, first, groceries);
             undo_note(.CATEGORY, store.transactions[first].id, before, "groceries");
             single := *undo.steps[undo.steps.count - 1];
-            check(undo.steps.count == 2 && single.edits.count == 1 && single.label == tprint("Moved % to Groceries.", store.transactions[first].description),
+            check(undo.steps.count == 2 && single.edits.count == 1 && single.label == tprint("% categorised as Groceries.", store.transactions[first].description),
                   tprint("undo: a write on its own is its own step (\"%\")", single.label));
             store_set_category(*store, first, original_first);
             undo_clear();
