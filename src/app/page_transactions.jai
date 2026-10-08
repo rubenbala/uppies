@@ -110,6 +110,11 @@ draw_transactions_page :: (r_in: Rect) {
     count_w := px(150);
     controls := bar;
     controls.w -= count_w;
+    // Clear keeps its place while filtering; the other controls give up room to it.
+    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
+    clear_w := px(70);
+    clear_reserve := ifx filtered then clear_w + px(6) else 0;
+    controls.w -= clear_reserve;
     search_w := clamp(controls.w - px(1180), px(170), px(300));
     search_r := cut_left(*controls, search_w);
     // In a narrow window the dropdowns give up width before the status filter does.
@@ -157,9 +162,10 @@ draw_transactions_page :: (r_in: Rect) {
         if ui_checkbox(transfers_label, cut_left(*controls, transfers_w), *st.hide_transfers) changed = true;
         cut_left(*controls, px(6));
     }
-    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
-    if filtered && controls.w >= px(80) {
-        if ui_button("Clear##txn-filters", cut_left(*controls, px(70)), .GHOST, .CLOSE) {
+    controls.w = max(controls.w, 0) + clear_reserve;
+    filtered = st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
+    if filtered && controls.w >= clear_w {
+        if ui_button("Clear##txn-filters", cut_left(*controls, clear_w), .GHOST, .CLOSE) {
             st.search.count = 0;
             st.period = 0; st.account = 0; st.category = 0; st.status = 0; st.direction = 0; st.tag = -1;
             st.hide_transfers = false;
