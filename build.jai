@@ -133,6 +133,7 @@ build :: () {
             app, ok := make_app_bundle();
             if !ok return;
             print("Bundled %/%\n", OUTPUT_DIR, APP_BUNDLE);
+            if !make_disk_image(app) return;
             exe = tprint("%/Contents/MacOS/%", app, EXE_FILE);
         }
     }
