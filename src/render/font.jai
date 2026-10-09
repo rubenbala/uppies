@@ -6,6 +6,9 @@
 // cached text costs one hash lookup per character.
 //
 // Sizes are in physical pixels (the UI multiplies by the DPI scale).
+//
+// On macOS, emoji are drawn in color by Core Text (emoji_macos.jai) into a
+// second, RGBA atlas: a whole emoji sequence is then one glyph.
 
 Font :: struct {
     id:          u8;
@@ -40,11 +43,12 @@ font_metrics :: (font: *Font, size_px: float) -> Font_Metrics {
     return m;
 }
 
-// The atlas: a single-channel coverage texture, packed in shelves. The
-// renderer uploads `dirty` each frame and recreates the texture when
-// `generation` changes (it grew or was cleared).
+// An atlas: a texture packed in shelves, single-channel coverage for text,
+// RGBA for color emoji. The renderer uploads `dirty` each frame and
+// recreates the texture when `generation` changes (it grew or was cleared).
 Glyph_Atlas :: struct {
     size:       s32;
+    bytes_per_pixel: s32 = 1;
     pixels:     [] u8;
     generation: u32;
     // Packing shelves.
@@ -55,13 +59,15 @@ Glyph_Atlas :: struct {
 }
 
 glyph_atlas: Glyph_Atlas;
+color_atlas := Glyph_Atlas.{bytes_per_pixel = 4};   // Color emoji (macOS); empty elsewhere.
 
 fonts_init :: () -> bool {
     if FT.FT_Init_FreeType(*ft_library) != 0 {
         log_error("Could not initialize FreeType.\n");
         return false;
     }
-    atlas_reset(ATLAS_INITIAL_SIZE);
+    atlas_reset(*glyph_atlas, ATLAS_INITIAL_SIZE);
+    #if OS == .MACOS atlas_reset(*color_atlas, COLOR_ATLAS_INITIAL_SIZE);
     return true;
 }
 
@@ -76,6 +82,8 @@ fonts_shutdown :: () {
     ft_library = null;
     deinit(*glyph_cache);
     array_free(glyph_atlas.pixels);
+    array_free(color_atlas.pixels);
+    #if OS == .MACOS emoji_shutdown();
 }
 
 // Loads the first font file that exists from candidates, relative paths
@@ -136,9 +144,8 @@ measure_text :: (font: *Font, size_px: float, text: string, style := Text_Style.
     previous: u32;
     i := 0;
     while i < text.count {
-        cp := next_code_point(text, *i);
-        g := get_glyph(font, px, cp);
-        digit := style.tabular && is_digit_code_point(cp);
+        g, cp := next_glyph(font, px, text, *i);
+        digit := style.tabular && is_digit_code_point(cp) && !g.color;
         if previous && font.has_kerning && !digit && g.source == font pen += kerning(font, px, previous, g.glyph_index);
         pen += ifx digit then tab_adv else g.advance;
         if g.advance > 0 || digit pen += style.tracking;
@@ -158,11 +165,22 @@ draw_text :: (font: *Font, size_px: float, x: float, baseline: float, text: stri
     previous: u32;
     i := 0;
     while i < text.count {
-        cp := next_code_point(text, *i);
-        g := get_glyph(font, px, cp);
-        digit := style.tabular && is_digit_code_point(cp);
+        g, cp := next_glyph(font, px, text, *i);
+        digit := style.tabular && is_digit_code_point(cp) && !g.color;
         if previous && font.has_kerning && !digit && g.source == font pen += kerning(font, px, previous, g.glyph_index);
         previous = ifx g.source == font then g.glyph_index else 0;
+
+        if g.color {   // Drawn as is, on whole pixels; only its opacity follows the text color.
+            slot := *g.bins[0];
+            if slot.w > 0 {
+                gx := floor(pen + 0.5) + slot.left;
+                gy := base_y - slot.top;
+                draw_color_glyph(gx, gy, gx + slot.w, gy + slot.h,
+                                 xx slot.x, xx slot.y, xx (slot.x + slot.w), xx (slot.y + slot.h), color);
+            }
+            pen += g.advance + style.tracking;
+            continue;
+        }
 
         // Tabular digits sit centered in the widest digit's advance.
         glyph_x := ifx digit then pen + (tab_adv - g.advance) * 0.5 else pen;
@@ -213,8 +231,7 @@ fit_text :: (font: *Font, size_px: float, text: string, max_width: float, style 
     i := 0;
     cut := 0;
     while i < text.count {
-        cp := next_code_point(text, *i);
-        g := get_glyph(font, px, cp);
+        g := next_glyph(font, px, text, *i);
         pen += g.advance + style.tracking;
         if pen > budget break;
         cut = i;
@@ -223,6 +240,8 @@ fit_text :: (font: *Font, size_px: float, text: string, max_width: float, style 
     while cut > 0 && text[cut - 1] == #char " " cut -= 1;
     return tprint("%1%2", slice(text, 0, cut), ELLIPSIS);
 }
+
+#if OS == .MACOS #load "emoji_macos.jai";
 
 is_digit_code_point :: inline (cp: u32) -> bool { return cp >= #char "0" && cp <= #char "9"; }
 
@@ -276,19 +295,21 @@ text_baseline_in :: (font: *Font, size_px: float, r: Rect) -> float {
 // Called at the start of a frame: a full atlas is cleared here, never in the
 // middle of a frame whose instances still point into it.
 fonts_begin_frame :: () {
-    if !glyph_atlas.clear_pending return;
+    if !glyph_atlas.clear_pending && !color_atlas.clear_pending return;
     log("Glyph atlas full; clearing it.\n");
     for * glyph_cache {
         for * slot: it.bins slot.rasterized = false;
     }
-    atlas_reset(glyph_atlas.size);
+    atlas_reset(*glyph_atlas, glyph_atlas.size);
+    if color_atlas.size atlas_reset(*color_atlas, color_atlas.size);
 }
 
 // Pixel sizes change with DPI; glyphs at the old sizes can go.
 fonts_clear_cache :: () {
     table_reset(*glyph_cache);
     for 0..loaded_font_count - 1 for * loaded_fonts[it].tabular_advance it.* = 0;
-    atlas_reset(glyph_atlas.size);
+    atlas_reset(*glyph_atlas, glyph_atlas.size);
+    if color_atlas.size atlas_reset(*color_atlas, color_atlas.size);
 }
 
 #scope_file
@@ -296,6 +317,8 @@ fonts_clear_cache :: () {
 SUBPIXEL_BINS      :: 4;
 ATLAS_INITIAL_SIZE :: 1024;
 ATLAS_MAX_SIZE     :: 4096;
+COLOR_ATLAS_INITIAL_SIZE :: 256;
+COLOR_ATLAS_MAX_SIZE     :: 2048;
 GLYPH_PADDING      :: 1;
 
 FT_LOAD_TARGET_LIGHT :: 1 << 16;   // FT_LOAD_TARGET_(FT_RENDER_MODE_LIGHT)
@@ -315,6 +338,8 @@ Glyph :: struct {
     glyph_index: u32;
     advance:     float;   // Pixels, unhinted.
     source:      *Font;   // The font that has the glyph: the requested one or a fallback.
+    color:       bool;    // A color emoji sequence, in color_atlas (bins[0] only).
+    emoji:       bool;    // macOS: Apple Color Emoji has the code point (it may start a color sequence).
     bins:        [SUBPIXEL_BINS] Glyph_Slot;
 }
 
@@ -357,6 +382,7 @@ get_glyph :: (font: *Font, px: int, code_point: u32) -> *Glyph {
         return table_add(*glyph_cache, key, new_glyph);
     }
 
+    #if OS == .MACOS new_glyph.emoji = emoji_has(code_point);   // Asked once per glyph, not per frame.
     new_glyph.glyph_index = FT.FT_Get_Char_Index(font.face, xx code_point);
     if new_glyph.glyph_index == 0 {
         // Emoji and symbols the UI font lacks come from the fallbacks.
@@ -377,6 +403,106 @@ get_glyph :: (font: *Font, px: int, code_point: u32) -> *Glyph {
         new_glyph.advance = source.face.glyph.linearHoriAdvance / 65536.0;
     }
     return table_add(*glyph_cache, key, new_glyph);
+}
+
+// The glyph at text[i], advancing i past it: one code point, or on macOS a
+// whole emoji sequence drawn in color. Also returns the (first) code point.
+// Plain text costs one glyph cache lookup per code point, as without emoji:
+// the sequence is only looked at for code points the emoji font has.
+next_glyph :: inline (font: *Font, px: int, text: string, i: *int) -> *Glyph, u32 {
+    start := i.*;
+    cp := next_code_point(text, i);
+    g := get_glyph(font, px, cp);
+    #if OS == .MACOS {
+        // ASCII and Latin-1 draw in color only as keycaps (1️⃣): with U+FE0F next.
+        if g.emoji && (cp >= 0xA9 || next_is_fe0f(text, i.*)) {
+            end := color_sequence_end(g, text, cp, i.*);
+            if end > 0 {
+                i.* = end;
+                return get_color_glyph(px, slice(text, start, end - start)), cp;
+            }
+        }
+    }
+    return g, cp;
+}
+
+#if OS == .MACOS {
+    // Where the emoji sequence starting with cp (the next code point at
+    // `after`) ends, when it is to be drawn in color; 0 when it isn't. A code
+    // point the fonts lack draws in color, as does any asking for it with a
+    // variation selector, skin tone, keycap or joiner; the symbol fonts'
+    // outlines are kept for the rest (✈ without U+FE0F), as on Windows.
+    color_sequence_end :: (g: *Glyph, text: string, cp: u32, after: int) -> int {
+        next, next_end := peek_code_point(text, after);
+        if next == 0xFE0E return 0;                // Text presentation asked for.
+
+        if is_regional_indicator(cp) {             // Flags are pairs.
+            return ifx is_regional_indicator(next) then next_end else after;
+        }
+        if !continues_emoji(next) && next != 0x200D && g.glyph_index != 0 return 0;
+
+        end := after;
+        while end < text.count {
+            next, next_end = peek_code_point(text, end);
+            if continues_emoji(next) {
+                end = next_end;
+            } else if next == 0x200D && next_end < text.count {
+                _, end = peek_code_point(text, next_end);   // The joined emoji.
+            } else {
+                break;
+            }
+        }
+        return end;
+    }
+
+    // Variation selector 16, keycap, skin tones, tags (subdivision flags).
+    continues_emoji :: inline (cp: u32) -> bool {
+        return cp == 0xFE0F || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F);
+    }
+
+    is_regional_indicator :: inline (cp: u32) -> bool { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+
+    next_is_fe0f :: inline (text: string, at: int) -> bool {   // U+FE0F is EF B8 8F.
+        return at + 2 < text.count && text[at] == 0xEF && text[at + 1] == 0xB8 && text[at + 2] == 0x8F;
+    }
+
+    peek_code_point :: inline (text: string, at: int) -> u32, int {
+        if at >= text.count return 0, at;
+        i := at;
+        cp := next_code_point(text, *i);
+        return cp, i;
+    }
+
+    // Cached by the sequence's hash and pixel size, apart from any font's
+    // glyphs (bit 63).
+    get_color_glyph :: (px: int, sequence: string) -> *Glyph {
+        h: u64 = 0xcbf29ce484222325;
+        for 0..sequence.count - 1 { h ^= sequence[it]; h *= 0x100000001b3; }
+        key := (1 << 63) | ((cast(u64) px) << 40) | (h & 0xFF_FFFF_FFFF);
+        g := table_find_pointer(*glyph_cache, key);
+        if g && g.bins[0].rasterized return g;
+
+        new_glyph: Glyph;
+        new_glyph.color = true;
+        slot := *new_glyph.bins[0];
+        slot.rasterized = true;   // Even on failure: don't retry every frame.
+        bitmap, ok := emoji_rasterize(px, sequence);
+        if ok {
+            new_glyph.advance = bitmap.advance;
+            if bitmap.w > 0 {
+                x, y, placed := atlas_allocate(*color_atlas, bitmap.w, bitmap.h);
+                if placed {
+                    atlas_write(*color_atlas, x, y, bitmap.w, bitmap.h, bitmap.pixels.data, bitmap.w * 4);
+                    slot.x, slot.y = xx x, xx y;
+                    slot.w, slot.h = xx bitmap.w, xx bitmap.h;
+                    slot.left = xx bitmap.left;
+                    slot.top  = xx bitmap.top;
+                }
+            }
+        }
+        if g { g.* = new_glyph; return g; }   // Re-rasterized after the atlas was cleared.
+        return table_add(*glyph_cache, key, new_glyph);
+    }
 }
 
 kerning :: (font: *Font, px: int, left: u32, right: u32) -> float {
@@ -408,19 +534,9 @@ rasterize_glyph :: (requested_font: *Font, px: int, g: *Glyph, bin: int) {
     h := cast(s32) bitmap.rows;
     if w == 0 || h == 0 return;   // Space and friends.
 
-    x, y, ok := atlas_allocate(w, h);
+    x, y, ok := atlas_allocate(*glyph_atlas, w, h);
     if !ok return;
-
-    atlas := *glyph_atlas;
-    for row: 0..h - 1 {
-        src := bitmap.buffer + row * bitmap.pitch;
-        dst := atlas.pixels.data + (y + row) * atlas.size + x;
-        memcpy(dst, src, w);
-    }
-    atlas.dirty_x0 = min(atlas.dirty_x0, x);
-    atlas.dirty_y0 = min(atlas.dirty_y0, y);
-    atlas.dirty_x1 = max(atlas.dirty_x1, x + w);
-    atlas.dirty_y1 = max(atlas.dirty_y1, y + h);
+    atlas_write(*glyph_atlas, x, y, w, h, bitmap.buffer, bitmap.pitch);
 
     slot.x, slot.y = xx x, xx y;
     slot.w, slot.h = xx w, xx h;
@@ -428,8 +544,7 @@ rasterize_glyph :: (requested_font: *Font, px: int, g: *Glyph, bin: int) {
     slot.top  = xx face.glyph.bitmap_top;
 }
 
-atlas_allocate :: (w: s32, h: s32) -> s32, s32, bool {
-    atlas := *glyph_atlas;
+atlas_allocate :: (atlas: *Glyph_Atlas, w: s32, h: s32) -> s32, s32, bool {
     pw := w + GLYPH_PADDING;
     ph := h + GLYPH_PADDING;
     if atlas.shelf_x + pw > atlas.size {
@@ -438,9 +553,10 @@ atlas_allocate :: (w: s32, h: s32) -> s32, s32, bool {
         atlas.shelf_h = 0;
     }
     if atlas.shelf_y + ph > atlas.size {
-        if atlas.size < ATLAS_MAX_SIZE {
-            atlas_grow();
-            gx, gy, grown_ok := atlas_allocate(w, h);
+        max_size := ifx atlas.bytes_per_pixel == 1 then ATLAS_MAX_SIZE else COLOR_ATLAS_MAX_SIZE;
+        if atlas.size < max_size {
+            atlas_grow(atlas);
+            gx, gy, grown_ok := atlas_allocate(atlas, w, h);
             return gx, gy, grown_ok;
         }
         atlas.clear_pending = true;   // Cleared at the start of the next frame.
@@ -453,14 +569,27 @@ atlas_allocate :: (w: s32, h: s32) -> s32, s32, bool {
     return x, y, true;
 }
 
+// Rows of w x h pixels from src (pitch bytes apart) to (x, y).
+atlas_write :: (atlas: *Glyph_Atlas, x: s32, y: s32, w: s32, h: s32, src: *u8, pitch: s32) {
+    bpp := atlas.bytes_per_pixel;
+    for row: 0..h - 1 {
+        dst := atlas.pixels.data + ((y + row) * atlas.size + x) * bpp;
+        memcpy(dst, src + row * pitch, w * bpp);
+    }
+    atlas.dirty_x0 = min(atlas.dirty_x0, x);
+    atlas.dirty_y0 = min(atlas.dirty_y0, y);
+    atlas.dirty_x1 = max(atlas.dirty_x1, x + w);
+    atlas.dirty_y1 = max(atlas.dirty_y1, y + h);
+}
+
 // Doubling keeps every glyph where it is: the old pixels become the top-left
 // quarter. New shelves start below the old content, across the full width.
-atlas_grow :: () {
-    atlas := *glyph_atlas;
+atlas_grow :: (atlas: *Glyph_Atlas) {
+    bpp := atlas.bytes_per_pixel;
     old_size := atlas.size;
     new_size := old_size * 2;
-    new_pixels := NewArray(new_size * new_size, u8);
-    for row: 0..old_size - 1 memcpy(new_pixels.data + row * new_size, atlas.pixels.data + row * old_size, old_size);
+    new_pixels := NewArray(new_size * new_size * bpp, u8);
+    for row: 0..old_size - 1 memcpy(new_pixels.data + row * new_size * bpp, atlas.pixels.data + row * old_size * bpp, old_size * bpp);
     array_free(atlas.pixels);
     atlas.pixels  = new_pixels;
     atlas.size    = new_size;
@@ -468,15 +597,15 @@ atlas_grow :: () {
     atlas.shelf_y = old_size;
     atlas.shelf_h = 0;
     atlas.generation += 1;
-    atlas_mark_all_dirty();
-    log("Glyph atlas grew to %x%\n", new_size, new_size);
+    atlas_mark_all_dirty(atlas);
+    log("% atlas grew to %x%\n", ifx bpp == 1 then "Glyph" else "Color glyph", new_size, new_size);
 }
 
-atlas_reset :: (size: s32) {
-    atlas := *glyph_atlas;
-    if atlas.pixels.count != size * size {
+atlas_reset :: (atlas: *Glyph_Atlas, size: s32) {
+    bytes := size * size * atlas.bytes_per_pixel;
+    if atlas.pixels.count != bytes {
         array_free(atlas.pixels);
-        atlas.pixels = NewArray(size * size, u8);
+        atlas.pixels = NewArray(bytes, u8);
     } else {
         memset(atlas.pixels.data, 0, atlas.pixels.count);
     }
@@ -486,11 +615,10 @@ atlas_reset :: (size: s32) {
     atlas.shelf_h = 0;
     atlas.clear_pending = false;
     atlas.generation += 1;
-    atlas_mark_all_dirty();
+    atlas_mark_all_dirty(atlas);
 }
 
-atlas_mark_all_dirty :: () {
-    atlas := *glyph_atlas;
+atlas_mark_all_dirty :: (atlas: *Glyph_Atlas) {
     atlas.dirty_x0, atlas.dirty_y0 = 0, 0;
     atlas.dirty_x1, atlas.dirty_y1 = atlas.size, atlas.size;
 }

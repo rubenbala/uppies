@@ -15,6 +15,7 @@ Draw_Kind :: enum u32 {
     SHADOW :: 2;   // Gaussian-blurred rounded rectangle.
     LINE   :: 3;   // Antialiased segment with round caps (charts).
     AREA   :: 4;   // Column with a sloped top edge down to a baseline (area charts).
+    COLOR_GLYPH :: 5;   // A color emoji from color_atlas (macOS only: the Metal shader draws it).
 }
 
 // Keep in sync with Instance in src/render/d3d11/ui.hlsl and src/render/metal/ui.metal.
@@ -192,6 +193,16 @@ draw_glyph :: inline (x0: float, y0: float, x1: float, y1: float, u0: float, v0:
     inst.uv     = .[u0, v0, u1, v1];
     inst.color0 = ifx draw.opacity < 1 then fade(color) else color;
     inst.kind   = .GLYPH;
+}
+
+// A color glyph keeps its own colors: only the alpha of `color` applies.
+draw_color_glyph :: inline (x0: float, y0: float, x1: float, y1: float, u0: float, v0: float, u1: float, v1: float, color: Color) {
+    inst := push_instance();
+    inst.rect   = .[x0, y0, x1, y1];
+    inst.uv     = .[u0, v0, u1, v1];
+    white := color | 0x00FF_FFFF;
+    inst.color0 = ifx draw.opacity < 1 then fade(white) else white;
+    inst.kind   = .COLOR_GLYPH;
 }
 
 #scope_file

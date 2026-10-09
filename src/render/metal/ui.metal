@@ -13,8 +13,9 @@
 using namespace metal;
 
 struct Frame {
-    float2 viewport_size;     // Pixels.
-    float2 atlas_inv_size;    // 1 / glyph atlas size in texels.
+    float2 viewport_size;         // Pixels.
+    float2 atlas_inv_size;        // 1 / glyph atlas size in texels.
+    float2 color_atlas_inv_size;  // 1 / color glyph (emoji) atlas size in texels.
 };
 
 // KIND_RECT = 0 is the fall-through case in ps_main.
@@ -22,6 +23,7 @@ constant uint KIND_GLYPH  = 1;
 constant uint KIND_SHADOW = 2;
 constant uint KIND_LINE   = 3;
 constant uint KIND_AREA   = 4;
+constant uint KIND_COLOR_GLYPH = 5;   // Metal only: Windows has no color glyphs.
 
 struct Instance {
     float4 rect;           // x0 y0 x1 y1
@@ -61,7 +63,7 @@ vertex VS_Out vs_main(uint vertex_id [[vertex_id]],
     // Areas tile side by side, so they only grow vertically (for the
     // antialiased top edge); their left and right edges stay hard.
     float2 grow = 1.0;
-    if (inst.kind == KIND_GLYPH)  grow = 0.0;
+    if (inst.kind == KIND_GLYPH || inst.kind == KIND_COLOR_GLYPH) grow = 0.0;
     if (inst.kind == KIND_SHADOW) grow = 3.0 * inst.params.y + 1.0;
     if (inst.kind == KIND_AREA)   grow = float2(0.0, 1.0);
 
@@ -76,7 +78,7 @@ vertex VS_Out vs_main(uint vertex_id [[vertex_id]],
     o.position = float4(p * (2.0 / frame.viewport_size) * float2(1, -1) + float2(-1, 1), 0, 1);
     o.pixel    = p;
     float2 t   = (p - inst.rect.xy) / max(inst.rect.zw - inst.rect.xy, 1e-5);
-    o.uv       = mix(inst.uv.xy, inst.uv.zw, t) * frame.atlas_inv_size;
+    o.uv       = mix(inst.uv.xy, inst.uv.zw, t) * (inst.kind == KIND_COLOR_GLYPH ? frame.color_atlas_inv_size : frame.atlas_inv_size);
     o.rect         = inst.rect;
     o.radii        = inst.radii;
     o.color0       = unpack_unorm4x8_to_float(inst.color0);
@@ -157,7 +159,8 @@ float sd_segment(float2 p, float2 a, float2 b) {
 }
 
 fragment float4 ps_main(VS_Out i [[stage_in]],
-                        texture2d<float> glyph_atlas [[texture(0)]]) {
+                        texture2d<float> glyph_atlas [[texture(0)]],
+                        texture2d<float> color_atlas [[texture(1)]]) {
     constexpr sampler atlas_sampler(filter::linear, address::clamp_to_edge);
 
     if (i.kind == KIND_LINE) {
@@ -181,6 +184,11 @@ fragment float4 ps_main(VS_Out i [[stage_in]],
         float a = glyph_atlas.sample(atlas_sampler, i.uv).r;
         a = text_coverage(a, i.color0.rgb) * i.color0.a;
         return float4(i.color0.rgb * a, a);
+    }
+
+    // Premultiplied RGBA, faded by the instance's alpha.
+    if (i.kind == KIND_COLOR_GLYPH) {
+        return color_atlas.sample(atlas_sampler, i.uv) * i.color0.a;
     }
 
     float2 center    = (i.rect.xy + i.rect.zw) * 0.5;

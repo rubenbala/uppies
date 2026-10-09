@@ -48,7 +48,8 @@ renderer_shutdown :: () {
     }
     if mtl.commands release(mtl.commands);
     if mtl.drawable release(mtl.drawable);
-    if mtl.atlas    release(mtl.atlas);
+    if mtl.glyph_atlas.texture release(mtl.glyph_atlas.texture);
+    if mtl.color_atlas.texture release(mtl.color_atlas.texture);
     if mtl.pipeline release(mtl.pipeline);
     if mtl.queue    release(mtl.queue);
     if mtl.device   release(mtl.device);
@@ -89,7 +90,8 @@ renderer_render :: (clear: Color) {
         frame.commands = null;
     }
 
-    upload_atlas();
+    upload_atlas(*mtl.glyph_atlas, *glyph_atlas, MTLPixelFormatR8Unorm);
+    upload_atlas(*mtl.color_atlas, *color_atlas, MTLPixelFormatRGBA8Unorm);
     count := upload_instances(frame);
 
     mtl.commands = retain(MTLCommandQueue.commandBuffer(mtl.queue));
@@ -110,10 +112,12 @@ renderer_render :: (clear: Color) {
         constants: Frame_Constants;
         constants.viewport_size  = .[cast(float) mtl.width, cast(float) mtl.height];
         constants.atlas_inv_size = .[1.0 / glyph_atlas.size, 1.0 / glyph_atlas.size];
+        constants.color_atlas_inv_size = .[1.0 / color_atlas.size, 1.0 / color_atlas.size];
         MTLRenderCommandEncoder.setRenderPipelineState(encoder, xx mtl.pipeline);
         MTLRenderCommandEncoder.setVertexBuffer_offset_atIndex(encoder, xx frame.instances, 0, 0);
         MTLRenderCommandEncoder.setVertexBytes_length_atIndex(encoder, *constants, size_of(Frame_Constants), 1);
-        MTLRenderCommandEncoder.setFragmentTexture_atIndex(encoder, xx mtl.atlas, 0);
+        MTLRenderCommandEncoder.setFragmentTexture_atIndex(encoder, xx mtl.glyph_atlas.texture, 0);
+        MTLRenderCommandEncoder.setFragmentTexture_atIndex(encoder, xx mtl.color_atlas.texture, 1);
         MTLRenderCommandEncoder.drawPrimitives_vertexStart_vertexCount_instanceCount(encoder, MTLPrimitiveTypeTriangleStrip, 0, 4, xx count);
         renderer_stats.instances  = count;
         renderer_stats.draw_calls = 1;
@@ -228,9 +232,14 @@ Metal_State :: struct {
     frames: [3] Frame_Slot;
     frame_index: int;
 
-    atlas: *MTLTexture;
-    atlas_generation: u32;
-    atlas_size: s32;
+    glyph_atlas: Atlas_Texture;
+    color_atlas: Atlas_Texture;   // Color emoji.
+}
+
+Atlas_Texture :: struct {
+    texture:    *MTLTexture;
+    generation: u32;
+    size:       s32;
 }
 
 mtl: Metal_State;
@@ -238,6 +247,7 @@ mtl: Metal_State;
 Frame_Constants :: struct {
     viewport_size:  [2] float;
     atlas_inv_size: [2] float;
+    color_atlas_inv_size: [2] float;
 }
 
 DRAWABLE_FORMAT :: MTLPixelFormatBGRA8Unorm;   // UNORM: blending in sRGB, as on Windows.
@@ -341,17 +351,17 @@ upload_instances :: (frame: *Frame_Slot) -> int {
     return count;
 }
 
-upload_atlas :: () {
-    atlas := *glyph_atlas;
-    if !mtl.atlas || mtl.atlas_generation != atlas.generation || mtl.atlas_size != atlas.size {
+upload_atlas :: (gpu: *Atlas_Texture, atlas: *Glyph_Atlas, format: MTLPixelFormat) {
+    if !atlas.size return;
+    if !gpu.texture || gpu.generation != atlas.generation || gpu.size != atlas.size {
         // A frame still on the GPU keeps the old texture alive.
-        if mtl.atlas release(mtl.atlas);
-        desc := MTLTextureDescriptor.texture2DDescriptorWithPixelFormat_width_height_mipmapped(MTLPixelFormatR8Unorm, xx atlas.size, xx atlas.size, NO);
+        if gpu.texture release(gpu.texture);
+        desc := MTLTextureDescriptor.texture2DDescriptorWithPixelFormat_width_height_mipmapped(format, xx atlas.size, xx atlas.size, NO);
         MTLTextureDescriptor.setUsage(desc, MTLTextureUsageShaderRead);
-        mtl.atlas = xx MTLDevice.newTextureWithDescriptor(mtl.device, desc);
-        if !mtl.atlas { fail("newTexture(atlas)"); return; }
-        mtl.atlas_generation = atlas.generation;
-        mtl.atlas_size = atlas.size;
+        gpu.texture = xx MTLDevice.newTextureWithDescriptor(mtl.device, desc);
+        if !gpu.texture { fail("newTexture(atlas)"); return; }
+        gpu.generation = atlas.generation;
+        gpu.size = atlas.size;
         atlas.dirty_x0, atlas.dirty_y0 = 0, 0;
         atlas.dirty_x1, atlas.dirty_y1 = atlas.size, atlas.size;
     }
@@ -359,12 +369,13 @@ upload_atlas :: () {
     if atlas.dirty_x0 >= atlas.dirty_x1 || atlas.dirty_y0 >= atlas.dirty_y1 return;
     // New glyphs only ever go to atlas space no frame in flight samples,
     // so writing it now, from the CPU, is safe.
+    bpp := atlas.bytes_per_pixel;
     region: MTLRegion;
     region.origin = MTLOriginMake(xx atlas.dirty_x0, xx atlas.dirty_y0, 0);
     region.size   = MTLSizeMake(xx (atlas.dirty_x1 - atlas.dirty_x0), xx (atlas.dirty_y1 - atlas.dirty_y0), 1);
-    src := atlas.pixels.data + atlas.dirty_y0 * atlas.size + atlas.dirty_x0;
-    MTLTexture.replaceRegion_mipmapLevel_withBytes_bytesPerRow(mtl.atlas, region, 0, src, xx atlas.size);
-    renderer_stats.upload_bytes += (atlas.dirty_x1 - atlas.dirty_x0) * (atlas.dirty_y1 - atlas.dirty_y0);
+    src := atlas.pixels.data + (atlas.dirty_y0 * atlas.size + atlas.dirty_x0) * bpp;
+    MTLTexture.replaceRegion_mipmapLevel_withBytes_bytesPerRow(gpu.texture, region, 0, src, xx (atlas.size * bpp));
+    renderer_stats.upload_bytes += (atlas.dirty_x1 - atlas.dirty_x0) * (atlas.dirty_y1 - atlas.dirty_y0) * bpp;
 
     atlas.dirty_x0, atlas.dirty_y0 = atlas.size, atlas.size;
     atlas.dirty_x1, atlas.dirty_y1 = 0, 0;

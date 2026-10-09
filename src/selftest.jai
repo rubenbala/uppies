@@ -532,6 +532,15 @@ selftest :: () -> int {
             if !font_has_glyph(fonts.icons, icon_code_point(icon)) array_add(*missing, type_info(Icon).names[it_index]);
         }
         check(!missing.count, tprint("every icon has a glyph (missing: %)", missing));
+
+        // Emoji draw in color, a whole sequence as one glyph (account names: "🏠 Home").
+        #if OS == .MACOS {
+            house  := measure_text(fonts.regular, 26, "\xF0\x9F\x8F\xA0");
+            family := measure_text(fonts.regular, 26, "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7");
+            flag   := measure_text(fonts.regular, 26, "\xF0\x9F\x87\xA6\xF0\x9F\x87\xBA");
+            check(house > 0 && abs(family - house) < 0.5 && abs(flag - house) < 0.5 && color_atlas.size > 0,
+                  tprint("emoji sequences are one color glyph (house %, family %, flag %)", house, family, flag));
+        }
     } else {
         check(false, "the icon font loads");
     }
