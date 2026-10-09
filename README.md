@@ -19,6 +19,8 @@ straight onto your saved data, and uses no CPU at all while you're just looking 
 > to say which bank Uppies works with. Uppies is provided as is, without warranty of any kind, and
 > nothing in it is financial advice.
 
+> 99% of the code in this application was written by Opus 5.5.
+
 ## What it does
 
 **See where you stand.** The Overview page shows your net position, every balance with its trend
