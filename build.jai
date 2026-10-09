@@ -4,6 +4,8 @@
 //     jai build.jai - release       optimized build (no console window)
 //     jai build.jai - run           build, then launch the app
 //     jai build.jai - release bundle  macOS: also make bin/Uppies.app
+//     jai build.jai - bundle        Windows: release build, then the installer
+//                                   bin/Uppies-<version>-setup.exe (Inno Setup 6)
 //
 // Shaders are compiled here, at build time, and their bytecode is embedded
 // in the executable: no shader compiler ships with the app, startup never
@@ -27,6 +29,7 @@
     Windows_Resources :: #import "Windows_Resources";
     Ico_File          :: #import "Ico_File";
     #import "Windows";
+    #import "Windows_Utf8";
     #import "d3d_compiler";
 }
 
@@ -51,11 +54,12 @@ build :: () {
             case "release"; release = true;
             case "run";     run = true;
             case "bundle";
-                #if OS != .MACOS {
-                    log_error("'bundle' makes a macOS app bundle; build on macOS for it.\n");
+                #if OS != .MACOS && OS != .WINDOWS {
+                    log_error("'bundle' makes a macOS app bundle or a Windows installer; build on one of those for it.\n");
                     return;
                 }
                 bundle = true;
+                #if OS == .WINDOWS  release = true;   // Only release builds are packaged.
             case; log_error("Unknown build argument '%'. Valid: release, run, bundle\n", it);
         }
     }
@@ -128,6 +132,9 @@ build :: () {
             print("Bundled %/%\n", OUTPUT_DIR, APP_BUNDLE);
             exe = tprint("%/Contents/MacOS/%", app, EXE_FILE);
         }
+    }
+    #if OS == .WINDOWS {
+        if bundle && !make_installer() return;
     }
 
     if run {
@@ -374,6 +381,7 @@ PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT
 #if OS == .WINDOWS {
     // The 256 px master is resized to 256/128/48/32/16 and written into the
     // exe as icon group 1, which the window class loads (platform_windows.jai).
+    // The same icon is kept in .build/uppies.ico for the installer.
     embed_icon :: () -> bool {
         png := tprint("%/%", #filepath, ICON_FILE);
         ico := Ico_File.create_ico_file_from_bitmap_filename(png);
@@ -385,7 +393,58 @@ PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT
             log_error("Could not set the icon of %\n", exe);
             return false;
         }
+        ico_file := tprint("%/.build/uppies.ico", #filepath);
+        if !write_entire_file(ico_file, ico) {
+            log_error("Could not write %\n", ico_file);
+            return false;
+        }
         return true;
+    }
+
+    // bin/Uppies-<version>-setup.exe, made by Inno Setup's command-line
+    // compiler from installer/uppies.iss, which takes the files from bin/.
+    // Neither the installer nor the exe is signed yet, so SmartScreen warns
+    // the first time someone runs them.
+    make_installer :: () -> bool {
+        if !file_exists(tprint("%/installer/FTL.TXT", #filepath)) {
+            print("Warning: installer/FTL.TXT is missing, so the installer ships freetype.dll without the FreeType License (see THIRD_PARTY.md).\n");
+        }
+        iscc   := find_iscc();
+        script := tprint("%/installer/uppies.iss", #filepath);
+        result, out, err := run_command(iscc, "/Q", tprint("/DAppVersion=%", APP_VERSION), script, capture_and_return_output = true);
+        if result.type != .EXITED || result.exit_code != 0 {
+            if out print("%", out);
+            if err print("%", err);
+            log_error("Inno Setup could not make the installer (ran %). Install Inno Setup 6 from https://jrsoftware.org/isinfo.php, or set UPPIES_ISCC to its ISCC.exe.\n", iscc);
+            return false;
+        }
+        print("Packaged %/Uppies-%-setup.exe\n", OUTPUT_DIR, APP_VERSION);
+        return true;
+    }
+
+    // UPPIES_ISCC, else where Inno Setup 6 installs itself (for this user, or
+    // for all users), else ISCC on the PATH.
+    find_iscc :: () -> string {
+        override := environment_variable("UPPIES_ISCC");
+        if override return override;
+        PLACES :: struct { variable: string; folder: string; }.[
+            .{"LOCALAPPDATA",      "Programs/Inno Setup 6"},
+            .{"ProgramFiles(x86)", "Inno Setup 6"},
+            .{"ProgramFiles",      "Inno Setup 6"},
+        ];
+        for PLACES {
+            base := environment_variable(it.variable);
+            if !base continue;
+            iscc := tprint("%/%/ISCC.exe", base, it.folder);
+            if file_exists(iscc) return iscc;
+        }
+        return "ISCC.exe";
+    }
+
+    environment_variable :: (name: string) -> string {
+        value := _wgetenv(cast(*s16) utf8_to_wide(name,, temp));
+        if !value return "";
+        return wide_to_utf8(cast(*u16) value,, temp);
     }
 }
 

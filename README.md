@@ -78,7 +78,13 @@ closed beta, so you need beta access to build from source.
 jai build.jai                 # debug build -> bin/uppies.exe
 jai build.jai - release       # optimized, no console window
 jai build.jai - run           # build, then launch
+jai build.jai - bundle        # release build, then the installer bin/Uppies-<version>-setup.exe
 ```
+
+The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); `build.jai` finds it where
+its installer puts it, or set `UPPIES_ISCC` to its `ISCC.exe`. The script is
+[installer/uppies.iss](installer/uppies.iss). Uppies installs per user by default (no administrator
+prompt) and offers to install for all users instead.
 
 **macOS.** The same commands build `bin/uppies` with a Metal renderer, on Apple silicon with
 macOS 13 or newer. It needs Xcode and, once, its Metal Toolchain
