@@ -2,6 +2,8 @@
 
 **Your Up account, on your desktop.**
 
+<img width="1896" height="1197" alt="Screenshot 2026-10-09 15_36_35 - uppies_4" src="https://github.com/user-attachments/assets/da92e30f-5d8e-425a-9d37-d34d85888b3e" />
+
 Uppies is a desktop app for people who bank with [Up](https://up.com.au). It's meant to feel like
 a utility rather than a sleek, minimal banking app. That means lots of information on screen at
 once, tables you can search and sort, and keyboard shortcuts for the things you do most.
