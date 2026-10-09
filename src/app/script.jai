@@ -18,6 +18,8 @@
 //   quit
 //
 // A scripted run never reads or writes the saved token or settings.
+//
+// Bundled builds (the installer, Uppies.app) leave this file out.
 
 Script :: struct {
     active: bool;
@@ -32,7 +34,6 @@ Script :: struct {
 }
 
 script: Script;
-persist_enabled := true;
 
 script_load :: (text: string) {
     script.active = true;

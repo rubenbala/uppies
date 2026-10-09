@@ -90,6 +90,7 @@ build :: () {
 
     compiler_begin_intercept(w);
     add_build_string(tprint("APP_RELEASE :: %;\n", release), w);
+    add_build_string(tprint("APP_BUNDLE :: %;\n", bundle), w);   // What ships: no -script or -selftest.
     add_build_string(tprint("APP_VERSION :: \"%\";\n", APP_VERSION), w);
     add_build_string(shader_source, w);
     add_build_file(tprint("%/src/main.jai", #filepath), w);

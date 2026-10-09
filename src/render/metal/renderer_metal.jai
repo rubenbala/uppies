@@ -33,7 +33,7 @@ renderer_init :: () -> bool {
     CAMetalLayer.setPixelFormat(mtl.layer, DRAWABLE_FORMAT);
     // Captures (renderer_capture_png) read the drawable back; otherwise it
     // only ever is a render target.
-    CAMetalLayer.setFramebufferOnly(mtl.layer, xx ifx script.active then NO else YES);
+    CAMetalLayer.setFramebufferOnly(mtl.layer, xx ifx scripted() then NO else YES);
     apply_vsync();
 
     if !create_pipeline() return false;

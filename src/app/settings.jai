@@ -24,6 +24,10 @@ Settings :: struct {
 
 settings: Settings;
 
+// Off for scripted and timed runs, which never read or write the saved
+// token, settings or data (unless given -data-dir).
+persist_enabled := true;
+
 settings_load :: () {
     if !persist_enabled return;
     path := tprint("%/settings.ini", platform_app_data_dir());

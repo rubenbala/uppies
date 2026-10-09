@@ -1,149 +1,180 @@
 # Uppies
 
-**An unofficial desktop client for [Up](https://up.com.au).**
+**Your Up account, on your desktop.**
 
-A desktop console for an Up bank account, built on the
-[Up API](https://developer.up.com.au). Written in [Jai](https://jai.community) on Direct3D 11:
-one draw call per frame, about 0.5–0.8 ms of CPU per frame in release, and no CPU at all while
-nothing changes.
+Uppies is a desktop app for people who bank with [Up](https://up.com.au). It's meant to feel like
+a utility rather than a sleek, minimal banking app. That means lots of information on screen at
+once, tables you can search and sort, and keyboard shortcuts for the things you do most.
 
-> **Disclaimer.** Uppies is an independent, unofficial app. It is not affiliated with, endorsed
-> by or sponsored by Up or Bendigo and Adelaide Bank Limited. "Up" is a trademark of its owner
-> and is used here only to say which bank Uppies works with. Uppies is provided as is, without
-> warranty of any kind, and nothing in it is financial advice.
+Uppies runs on Windows and Mac, and a Linux version is coming soon.
 
-Pages sit in a tab bar along the top (there is no sidebar):
+It's quick, too. Uppies is written from scratch rather than wrapped around a web page, opens
+straight onto your saved data, and uses no CPU at all while you're just looking at it.
 
-| Page         | Answers                                                                 |
-|--------------|-------------------------------------------------------------------------|
-| Overview     | Where do I stand? Net position, balances with 30-day trends, cash flow, this month's spending, recent activity, and what needs attention (holds, uncategorised purchases, sync problems). |
-| Transactions | Find and fix transactions: search, filters, sortable table grouped by day, and an inspector to change the category and tags, or save the transaction as a PDF. Ctrl+click (or Shift+click) several to change their category or tag them all at once. |
-| Accounts     | How each balance is moving: balance history (reconstructed from transactions), monthly ledger, money in and out by month. Ctrl+click (or Shift+click) several to see them added together. |
-| Spending     | Where the money goes: categories grouped by parent with comparisons, 12-month stacked chart, top merchants. |
-| Recurring    | What comes round on a schedule: subscriptions, bills and income found in your history, what they cost a month, what's due in the next 30 days, and price changes. Hide anything that isn't really recurring. |
-| Tags         | What each tag cost, by category and by month.                           |
-| Webhooks     | Create, ping and delete webhooks; delivery health and logs with payloads. |
-| Settings     | Connection, data (history depth, auto-refresh, transfer handling), display (theme, motion), diagnostics, keys. |
+> Uppies is an independent, unofficial app. It isn't affiliated with, endorsed by or sponsored by
+> Up or Bendigo and Adelaide Bank Limited. "Up" is a trademark of its owner and is only used here
+> to say which bank Uppies works with. Uppies is provided as is, without warranty of any kind, and
+> nothing in it is financial advice.
 
-Six themes are built in (Uppies Dark, Uppies Light, Nord, Dracula, Solarized Light and Catppuccin
-Latte), and you can write your own: each is a small TOML file. See [themes/](themes/README.md).
+## What it does
 
-## Connecting
+**See where you stand.** The Overview page shows your net position, every balance with its trend
+over the last 30 days, money in and out, this month's spending and your latest activity. It also
+points out anything that needs a look, like held payments or purchases without a category.
 
-Create a personal access token at <https://api.up.com.au/getting_started> and paste it into the
-connect screen. With "Remember on this PC" the token is stored encrypted with Windows DPAPI in
-`%APPDATA%\Uppies\token.bin` (only your Windows account can decrypt it). It is only ever sent to
-`api.up.com.au`. **Explore with sample data** runs the whole app against an offline simulation
-of the API instead.
+**Find any transaction.** Search, filter by account, category, tag or date (financial years
+included), and sort however you like. Click a transaction to change its category or tags, or save it as a PDF.
+Ctrl+click a few and you can recategorise or tag them all in one go. Made a mistake? Ctrl+Z.
 
-Uppies can change categories and tags and manage webhooks; it cannot move money (the API
-doesn't allow it).
+**Understand your spending.** See spending by category and how it compares with previous months,
+a 12-month chart, and the merchants you spend the most with. Tag a trip or a project and the Tags
+page shows what it cost.
 
-## Your data on this PC
+**Keep track of what's recurring.** Uppies picks out your subscriptions, bills and regular income
+from your history. You'll see what they add up to each month, what's due in the next 30 days and
+when a price goes up. If it gets one wrong, hide it.
 
-Uppies keeps what it has downloaded in `%APPDATA%\Uppies\store.uppies`, so it opens instantly
-and afterwards only asks Up for what changed. The file is encrypted with AES-256-GCM under a
-fresh random key on every save; that key is protected by Windows DPAPI together with your access
-token, so only your Windows account, with that same token, can read it. A file that was altered,
-damaged or written by another token is never used: Uppies deletes it and downloads again.
+**Watch your accounts over time.** Follow each balance month by month, or select a few accounts
+to see them added together.
 
-Each time it opens, Uppies shows the saved data, then re-reads balances, categories and the last
-45 days of transactions (further back if something is still pending or it has been a while).
-Up has no way to ask "what changed?", so once a week it also re-reads the whole history in the
-background, to catch changes to older transactions (a category set in the Up app, say).
+If you use Up's webhooks, there's a page to create, test and delete them and to read their
+delivery logs.
 
-**Settings > Data** shows the file's size and the last full check, and has **Delete local
-data**, which removes the file and downloads everything again, and a switch to stop keeping a
-copy at all.
+## Getting started
 
-Up's API has nothing on recurring payments, so the **Recurring** page works them out from your
-transactions on this PC. The ones you hide are kept in `user.bin` beside the data, sealed like
-the token, and survive **Delete local data**.
+Uppies runs on Windows 10 and 11, and on Apple silicon Macs with macOS 13 or newer. Linux is
+coming soon.
 
-## Security
+1. Download Uppies from the [latest release](https://github.com/rubenbala/uppies/releases/latest):
+   the installer for Windows, or the app for Mac.
+2. Make a personal access token at [api.up.com.au](https://api.up.com.au/getting_started). This is
+   what lets Uppies read your account.
+3. Open Uppies and paste the token in. Tick **Remember on this PC** (or **this Mac**) if you don't
+   want to paste it again next time.
 
-Uppies never sends your token anywhere but `api.up.com.au`, and the Up API can't be used to
-move money. Anyone who has your token or can run code as your Windows user can still read your
-data, so revoke the token at <https://api.up.com.au/getting_started> if you suspect it has
-leaked. Please report vulnerabilities privately (see [SECURITY.md](SECURITY.md)), and never post
-a real token, `token.bin`, `store.uppies` or screenshots of real data in an issue; use `-demo`
-mode instead.
+Just want a look first? Choose **Explore with sample data** and you can try everything with a
+made-up account, without connecting to Up at all.
 
-## Build and run
+Windows might say it "protected your PC" the first time you run the installer. That's because
+Uppies is new and isn't code-signed yet. Click **More info**, then **Run anyway**.
 
-Requires the Jai compiler on the PATH (`jai`) and Windows 10 or newer. Jai is currently in a
-closed beta, so you need beta access to build from source.
+## Your money and your privacy
+
+Uppies can't move money. Up's API doesn't allow it, so the most Uppies can change is a
+transaction's category or tags.
+
+Your token is only ever sent to Up (`api.up.com.au`). If you ask Uppies to remember it, it's
+stored encrypted so that only your user account on your computer can read it. On Windows that's
+done by Windows itself; on a Mac, the key is kept in your Keychain.
+
+To open quickly, Uppies keeps a copy of your transactions on your computer, in
+`%APPDATA%\Uppies` on Windows or `~/Library/Application Support/Uppies` on a Mac. That copy is
+encrypted too, and only opens with your user account and your token. If the file has been
+tampered with or damaged, Uppies throws it away and downloads your data again.
+
+Each time Uppies opens, it shows your saved data straight away and then asks Up for anything
+recent. Up can't say which older transactions have changed, so once a week Uppies quietly
+rechecks your whole history. That way a category you changed in the Up app still shows up.
+
+You're in control of the local copy. **Settings → Data** shows how big it is, lets you delete
+it, and can turn it off altogether. Payments you've hidden on the Recurring page are kept
+separately, so deleting the copy doesn't bring them back.
+
+If you think your token has leaked, revoke it at
+[api.up.com.au](https://api.up.com.au/getting_started) and make a new one.
+
+## Keyboard shortcuts
+
+| Keys                      | What they do                                          |
+|---------------------------|-------------------------------------------------------|
+| Ctrl+1 to Ctrl+8, Ctrl+Tab | Switch page                                          |
+| / or Ctrl+F               | Search transactions                                   |
+| F5 or Ctrl+R              | Refresh from Up                                       |
+| Arrow keys, PgUp, PgDn, Home, End | Move through a table                          |
+| Ctrl+click, Shift+click   | Select several transactions or accounts               |
+| Ctrl+P                    | Save the selected transaction as a PDF                |
+| Ctrl+Z                    | Undo your last category or tag change                 |
+| Esc                       | Close a menu, clear the search or close the details panel |
+| Tab, Shift+Tab            | Move between controls (Enter or Space to press one)   |
+
+On a Mac, use Cmd (⌘) wherever it says Ctrl, except for Ctrl+Tab.
+
+## Uninstalling
+
+On Windows, uninstall Uppies from **Settings → Apps**. It will ask whether to delete your saved
+token and data as well. Say no if you plan to install it again and want to pick up where you
+left off.
+
+On a Mac, drag Uppies to the Bin. Your data stays in `~/Library/Application Support/Uppies`
+until you delete that folder (or use **Delete local data** in Settings first).
+
+## Found a problem?
+
+Please [open an issue](https://github.com/rubenbala/uppies/issues). Never include your token, any
+of Uppies' data files, or screenshots of your real account. Sample data mode is perfect
+for screenshots. If it's a security problem, please report it privately instead (see
+[SECURITY.md](SECURITY.md)).
+
+## Building from source
+
+Uppies is written in [Jai](https://jai.community). The compiler is in closed beta, so you'll need
+beta access and `jai` on your PATH.
 
 ```bash
-jai build.jai                 # debug build -> bin/uppies.exe
-jai build.jai - release       # optimized, no console window
+jai build.jai                 # debug build: bin/uppies.exe
+jai build.jai - release       # optimised build, no console window
 jai build.jai - run           # build, then launch
-jai build.jai - bundle        # release build, then the installer bin/Uppies-<version>-setup.exe
+jai build.jai - bundle        # release build plus the installer: bin/Uppies-<version>-setup.exe
 ```
 
-The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php); `build.jai` finds it where
-its installer puts it, or set `UPPIES_ISCC` to its `ISCC.exe`. The script is
-[installer/uppies.iss](installer/uppies.iss). Uppies installs per user by default (no administrator
-prompt) and offers to install for all users instead.
+Making the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). The build finds it
+where it normally installs, or you can set `UPPIES_ISCC` to the path of its `ISCC.exe`. The
+installer script is [installer/uppies.iss](installer/uppies.iss).
 
-**macOS.** The same commands build `bin/uppies` with a Metal renderer, on Apple silicon with
-macOS 13 or newer. It needs Xcode and, once, its Metal Toolchain
-(`xcodebuild -downloadComponent MetalToolchain`). Everything works as on Windows: in the
-packaged app (`release bundle`, run from `Uppies.app`) the token and the encrypted local copy are
-protected by a key in your login Keychain, and the data is kept in
-`~/Library/Application Support/Uppies`. An ad-hoc signed app is a new app to the Keychain each
-time it is rebuilt, so macOS asks once whether it may use the Uppies key; set
-`UPPIES_SIGN_IDENTITY` to a codesigning identity to sign with it instead and keep the Keychain's
-trust across builds.
+### macOS
 
-Development builds (debug, and release run from `bin/`) never ask: they keep their key in
-`~/Library/Application Support/Uppies Dev/local.key`, readable only by your user, and their data
-in that folder too, apart from the packaged app's. That is weaker than the Keychain (anything
-running as you can read the key file), so use the packaged app for your real account day to day.
+The same commands build a Metal version for Apple silicon Macs running macOS 13 or newer. You'll
+need Xcode, plus its Metal Toolchain (install it once with
+`xcodebuild -downloadComponent MetalToolchain`).
 
 ```bash
-jai build.jai - release bundle   # macOS: also make bin/Uppies.app (icon, Info.plist, ad-hoc signed)
+jai build.jai - release bundle   # also makes bin/Uppies.app
 ```
 
-The bundle runs on the Mac that built it. Giving it to others needs a Developer ID signature and
-notarization.
+`Uppies.app` keeps its key in your login Keychain and its data in
+`~/Library/Application Support/Uppies`. Because it's signed ad hoc, macOS treats every rebuild as
+a new app and asks once whether it may use the key. Set `UPPIES_SIGN_IDENTITY` to a code-signing
+identity to avoid that. The bundle only runs on the Mac that built it; sharing it needs a
+Developer ID signature and notarisation.
 
-Command-line options, mostly for testing:
+Development builds (debug builds, and release builds run from `bin/`) don't use the Keychain.
+They keep their key in a file in `~/Library/Application Support/Uppies Dev`, separate from the
+real app's data. That's less secure, so use `Uppies.app` for your real account.
 
-| Option                 | Effect                                                            |
-|------------------------|-------------------------------------------------------------------|
-| `-demo`                | Start with sample data                                            |
-| `-selftest`            | Run the parser/store/format/crypto checks and exit (0 = pass)     |
-| `-size 1440x900`       | Initial window size (logical units)                               |
-| `-page spending`       | Open on a page                                                    |
-| `-script "steps"`      | Drive the app off screen and save PNGs and PDFs (see `src/app/script.jai`) |
-| `-hidden -quit-after N`| Run off screen for N seconds and report frames drawn and CPU time |
-| `-continuous`          | Render every frame (benchmarking)                                 |
+### Command-line options
 
-Scripted and timed runs never read or write the saved token or settings.
+These are mostly for testing. Scripted and timed runs never touch your saved token or settings.
+`-selftest` and `-script` are left out of bundled builds (the installer and `Uppies.app`), so
+they only work in builds made without `bundle`.
 
-## Keys
+| Option                  | Effect                                                      |
+|-------------------------|-------------------------------------------------------------|
+| `-demo`                 | Start with sample data                                      |
+| `-selftest`             | Run the built-in checks and exit (0 means they passed)      |
+| `-size 1440x900`        | Set the starting window size                                |
+| `-page spending`        | Open on a particular page                                   |
+| `-script "steps"`       | Drive the app off screen, saving PNGs and PDFs (see `src/app/script.jai`) |
+| `-hidden -quit-after N` | Run off screen for N seconds, then report frames drawn and CPU time |
+| `-continuous`           | Draw every frame, for benchmarking                          |
 
-| Key                     | Action                                        |
-|-------------------------|-----------------------------------------------|
-| Ctrl+1..8, Ctrl+Tab     | Switch page                                   |
-| / or Ctrl+F             | Search transactions                           |
-| F5 or Ctrl+R            | Refresh from Up                               |
-| ↑ ↓ PgUp PgDn Home End  | Move through the focused table                |
-| Ctrl+click, Shift+click | Choose several transactions, to recategorise or tag them together, or several accounts, to add them together |
-| Ctrl+P                  | Save the transaction in the inspector as a PDF |
-| Ctrl+Z                  | Undo the last category or tag change (also the Undo button on its message) |
-| Esc                     | Close a menu, clear a search, close the inspector |
-| Tab / Shift+Tab         | Move keyboard focus; Enter or Space activates |
+### Fonts
 
-## Fonts
+Uppies uses fonts that come with Windows: Segoe UI for text, Cascadia Mono (or Consolas) for IDs
+and times, Bahnschrift for the big numbers and Segoe MDL2 Assets for icons. To use your own,
+put `ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf`, `ui-mono.ttf` or `ui-numeric.ttf` in
+`data/fonts/`.
 
-Segoe UI for text, Cascadia Mono (or Consolas) for identifiers and timestamps, Bahnschrift for
-headline figures, Segoe MDL2 Assets for icons, and Segoe UI Symbol/Emoji as fallbacks. To use
-other fonts, put `ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf`, `ui-mono.ttf` or
-`ui-numeric.ttf` in `data/fonts/`.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it is put together.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how it all fits together.
 
 ## License
 

@@ -52,7 +52,7 @@ FT :: #import "freetype";
 #load "up/store_file.jai";
 #load "up/client.jai";
 #load "up/demo.jai";
-#load "selftest.jai";
+#if !APP_BUNDLE #load "selftest.jai";
 #load "render/draw.jai";
 #load "render/font.jai";
 #load "render/renderer.jai";
@@ -82,7 +82,7 @@ FT :: #import "freetype";
 #load "app/page_tags.jai";
 #load "app/page_webhooks.jai";
 #load "app/page_settings.jai";
-#load "app/script.jai";
+#if !APP_BUNDLE #load "app/script.jai";   // Testing only: bundled builds don't take -script.
 
 MAX_FRAME_DT :: 0.1;   // Longer frames (a hitch, a breakpoint) don't jump animations.
 
@@ -114,6 +114,7 @@ main :: () {
     // -selftest | -demo | -size WxH | -script "steps" (see app/script.jai)
     // -data-dir PATH: keep settings, token and data there, even when
     //                 scripted (tests); -cache-demo: store sample data too.
+    // Bundled builds take neither -selftest nor -script.
     args := get_command_line_arguments();
     width, height := 1360, 860;
     start_demo := false;
@@ -123,13 +124,15 @@ main :: () {
     quit_after: float64 = -1;   // Seconds; reports how many frames were drawn.
     data_dir := "";
     for args {
-        if it == "-selftest" exit(cast(s32) selftest());
+        #if !APP_BUNDLE {
+            if it == "-selftest" exit(cast(s32) selftest());
+            if it == "-script" && it_index + 1 < args.count script_load(args[it_index + 1]);
+        }
         if it == "-demo" start_demo = true;
         if it == "-size" && it_index + 1 < args.count {
             found, w, h := split_from_left(args[it_index + 1], "x");
             if found { width = string_to_int(w); height = string_to_int(h); }
         }
-        if it == "-script" && it_index + 1 < args.count script_load(args[it_index + 1]);
         if it == "-hidden" hidden = true;
         if it == "-continuous" continuous = true;
         if it == "-page" && it_index + 1 < args.count start_page = args[it_index + 1];
@@ -166,7 +169,7 @@ main :: () {
     clock.resumed = true;
     renderer_wait_for_frame();
     run_frame();
-    if !script.active && !hidden platform_show_window();   // Scripted runs stay off screen.
+    if !scripted() && !hidden platform_show_window();   // Scripted runs stay off screen.
     frames_at_start := clock.frame_count;
     late_start: s64 = -1;   // Frame count five seconds before a timed run ends.
     late_cpu_ms, late_cpu_max: float;
@@ -226,7 +229,13 @@ main :: () {
 // Something to show: input arrived, an animation is in flight, or the app
 // renders continuously (benchmarking).
 wants_frame :: () -> bool {
-    return platform.needs_redraw || clock.settle_frames > 0 || ui.animating || app.continuous_rendering || script.active;
+    return platform.needs_redraw || clock.settle_frames > 0 || ui.animating || app.continuous_rendering || scripted();
+}
+
+// A -script run is in progress (never, in a bundled build).
+scripted :: inline () -> bool {
+    #if APP_BUNDLE return false;
+    else return script.active;
 }
 
 // Frames that Win32's modal move/resize loop asks for (see platform_windows).
@@ -257,7 +266,7 @@ run_frame :: () {
     else if clock.settle_frames > 0 clock.settle_frames -= 1;
     platform.needs_redraw = false;   // Input arriving from here on is for the next frame.
 
-    script_frame();
+    #if !APP_BUNDLE script_frame();
     fonts_begin_frame();
     draw_begin_frame(xx platform.width, xx platform.height);
     ui_begin_frame(clock.dt, now);   // Wall clock for timers; animations step by dt.
@@ -268,6 +277,6 @@ run_frame :: () {
 
     renderer_render(theme.background);
     clock.cpu_ms = cast(float) ((seconds_since_init() - now) * 1000);
-    script_after_render();
+    #if !APP_BUNDLE script_after_render();
     renderer_present();
 }
