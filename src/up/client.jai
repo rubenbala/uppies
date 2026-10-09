@@ -94,8 +94,10 @@ api_submit :: (kind: Api_Kind, method: string, path: string, body := "", generat
     req.kind = kind;
     req.method = copy_string(method);
     full_path := path;
-    ORIGIN :: "https://api.up.com.au";
-    if begins_with(full_path, ORIGIN) full_path = slice(full_path, ORIGIN.count, full_path.count - ORIGIN.count);
+    // The slash matters: "https://api.up.com.au.evil.com/" or "...au@evil.com/"
+    // must not leave a path that names another host (macOS joins host and path).
+    ORIGIN :: "https://api.up.com.au/";
+    if begins_with(full_path, ORIGIN) full_path = slice(full_path, ORIGIN.count - 1, full_path.count - ORIGIN.count + 1);
     else full_path = tprint("%%", API_PREFIX, path);
     req.path = copy_string(full_path);
     req.body = copy_string(body);

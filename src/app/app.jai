@@ -156,7 +156,11 @@ app_toast :: (kind: Toast_Kind, text: string, undo: u32 = 0) {
 
 app_on_connected :: () {
     app.connect.auto_connecting = false;
-    if !sync.demo && settings.remember_token token_save(sync.token);
+    if !sync.demo {
+        // Unticked: forget a token saved before, or it would connect next time anyway.
+        if settings.remember_token token_save(sync.token);
+        else token_forget();
+    }
     settings_save();
     if !app.keep_page select_page(.OVERVIEW);
     app.keep_page = false;
