@@ -49,7 +49,8 @@ Uppies runs on Windows 10 and 11, and on Apple silicon Macs with macOS 13 or new
 coming soon.
 
 1. Download Uppies from the [latest release](https://github.com/rubenbala/uppies/releases/latest):
-   the installer for Windows, or the app for Mac.
+   the installer for Windows, or the disk image (`.dmg`) for Mac. On a Mac, open the disk image
+   and drag Uppies into Applications.
 2. Make a personal access token at [api.up.com.au](https://api.up.com.au/getting_started). This is
    what lets Uppies read your account.
 3. Open Uppies and paste the token in. Tick **Remember on this PC** (or **this Mac**) if you don't
@@ -60,6 +61,11 @@ made-up account, without connecting to Up at all.
 
 Windows might say it "protected your PC" the first time you run the installer. That's because
 Uppies is new and isn't code-signed yet. Click **More info**, then **Run anyway**.
+
+Each download has a `.sha256` file next to it on the release page, holding its SHA-256 checksum.
+To check your download is exactly the one released, compare that with what
+`Get-FileHash Uppies-1.0.0-setup.exe` prints in PowerShell, or `shasum -a 256 Uppies-1.0.0-mac.dmg`
+in the Mac's Terminal.
 
 ## Your money and your privacy
 
@@ -130,6 +136,8 @@ jai build.jai - run           # build, then launch
 jai build.jai - bundle        # release build plus the installer: bin/Uppies-<version>-setup.exe
 ```
 
+`bundle` also writes a `.sha256` checksum file next to what it makes. Upload both to the release.
+
 Making the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php). The build finds it
 where it normally installs, or you can set `UPPIES_ISCC` to the path of its `ISCC.exe`. The
 installer script is [installer/uppies.iss](installer/uppies.iss).
@@ -141,8 +149,10 @@ need Xcode, plus its Metal Toolchain (install it once with
 `xcodebuild -downloadComponent MetalToolchain`).
 
 ```bash
-jai build.jai - release bundle   # also makes bin/Uppies.app
+jai build.jai - bundle   # also makes bin/Uppies.app, and the disk image bin/Uppies-<version>-mac.dmg
 ```
+
+The disk image holds `Uppies.app` next to a shortcut to Applications, so people can drag it in.
 
 `Uppies.app` keeps its key in your login Keychain and its data in
 `~/Library/Application Support/Uppies`. Because it's signed ad hoc, macOS treats every rebuild as

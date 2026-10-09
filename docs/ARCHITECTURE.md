@@ -172,9 +172,11 @@ and all their files in `Uppies Dev` beside `Uppies`, since data sealed with one 
 by a build holding the other. Icons are Unicode symbols from Apple Symbols and Menlo standing in for
 the Segoe MDL2 code points (`icon_code_point` in `ui/theme.jai`). The Objective-C calls go through
 `objc_msgSend` cast to each signature; floats have wrappers of their own, since the compiler
-merged polymorphic wrappers' instantiations whose argument types differed. `jai build.jai - release bundle`
+merged polymorphic wrappers' instantiations whose argument types differed. `jai build.jai - bundle`
 also makes `bin/Uppies.app`: the executable, `data/` in `Contents/Resources` (found through
 `resource_dir`), an `.icns` made from `assets/icon.png`, an `Info.plist`, and an ad-hoc signature.
+It then puts the app beside a link to `/Applications` in `bin/Uppies-<version>-mac.dmg` (`hdiutil`),
+with a `.sha256` beside it, as the Windows installer has.
 
 To add Linux:
 

@@ -3,9 +3,11 @@
 //     jai build.jai                 debug build   -> bin/uppies.exe (bin/uppies on macOS)
 //     jai build.jai - release       optimized build (no console window)
 //     jai build.jai - run           build, then launch the app
-//     jai build.jai - release bundle  macOS: also make bin/Uppies.app
-//     jai build.jai - bundle        Windows: release build, then the installer
-//                                   bin/Uppies-<version>-setup.exe (Inno Setup 6)
+//     jai build.jai - bundle        release build, then what a release ships, each
+//                                   with a .sha256 beside it:
+//                                   Windows: bin/Uppies-<version>-setup.exe (Inno Setup 6)
+//                                   macOS:   bin/Uppies-<version>-mac.dmg (Uppies.app and
+//                                            a link to drag it into Applications)
 //
 // Shaders are compiled here, at build time, and their bytecode is embedded
 // in the executable: no shader compiler ships with the app, startup never
@@ -59,7 +61,7 @@ build :: () {
                     return;
                 }
                 bundle = true;
-                #if OS == .WINDOWS  release = true;   // Only release builds are packaged.
+                release = true;   // Only release builds are packaged.
             case; log_error("Unknown build argument '%'. Valid: release, run, bundle\n", it);
         }
     }
@@ -224,6 +226,46 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
     append(builder, "\n];\n");
 }
 
+// Writes <path>.sha256 beside a file a release ships: "<hash>  <file name>",
+// the format sha256sum -c and shasum -c read. Uploaded with the release so a
+// download can be checked against it. The OS's own tool does the hashing.
+write_sha256_file :: (path: string) -> bool {
+    hash: string;
+    #if OS == .WINDOWS {
+        // A header line, the hash (spaced in pairs on older Windows), a footer.
+        _, out := run_command("certutil", "-hashfile", path, "SHA256", capture_and_return_output = true);
+        for line: split(out, "\n",, temp) {
+            candidate := replace(trim(line), " ", "",, temp);
+            if is_sha256(candidate) { hash = candidate; break; }
+        }
+    } else {
+        // "<hash>  <path>"
+        _, out := run_command("shasum", "-a", "256", path, capture_and_return_output = true);
+        found, first := split_from_left(trim(out), " ");
+        if found hash = first;
+    }
+    if !is_sha256(hash) {
+        log_error("Could not compute the SHA-256 of %\n", path);
+        return false;
+    }
+    hash = to_lower_copy(hash,, temp);
+    sum_file := tprint("%.sha256", path);
+    if !write_entire_file(sum_file, tprint("%  %\n", hash, path_filename(path))) {
+        log_error("Could not write %\n", sum_file);
+        return false;
+    }
+    print("SHA-256 % (%)\n", hash, path_filename(sum_file));
+    return true;
+}
+
+is_sha256 :: (s: string) -> bool {
+    if s.count != 64 return false;
+    for cast([] u8) s {
+        if !((it >= #char "0" && it <= #char "9") || (it >= #char "a" && it <= #char "f") || (it >= #char "A" && it <= #char "F")) return false;
+    }
+    return true;
+}
+
 #if OS == .MACOS {
     // The Xcode that xcode-select names, unless that is only the Command Line
     // Tools, which have no Metal compiler.
@@ -314,6 +356,36 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
             return "", false;
         }
         return app, true;
+    }
+
+    // bin/Uppies-<version>-mac.dmg: Uppies.app beside a link to /Applications,
+    // so opening the disk image shows where to drag it. Signed as the app is,
+    // so the same caveat applies: without a Developer ID signature and
+    // notarisation, Gatekeeper asks before opening it on another Mac.
+    make_disk_image :: (app: string) -> bool {
+        staging := tprint("%/.build/dmg", #filepath);
+        // rm, not delete_directory: it never follows the link into /Applications.
+        if !run_tool("rm", "-rf", staging) return false;
+        make_directory_if_it_does_not_exist(staging, recursive = true);
+        defer run_tool("rm", "-rf", staging);
+
+        // ditto copies the bundle exactly as signed (links, modes, attributes).
+        if !run_tool("ditto", app, tprint("%/%", staging, APP_BUNDLE)) {
+            log_error("Could not copy % into the disk image\n", APP_BUNDLE);
+            return false;
+        }
+        if !run_tool("ln", "-s", "/Applications", tprint("%/Applications", staging)) {
+            log_error("Could not link Applications into the disk image\n");
+            return false;
+        }
+        dmg := tprint("%/%/%-%-mac.dmg", #filepath, OUTPUT_DIR, APP_NAME, APP_VERSION);
+        if !run_tool("hdiutil", "create", "-volname", tprint("% %", APP_NAME, APP_VERSION), "-srcfolder", staging, "-ov", "-format", "UDZO", dmg) {
+            log_error("hdiutil could not make %\n", dmg);
+            return false;
+        }
+        if !write_sha256_file(dmg) return false;
+        print("Packaged %/%\n", OUTPUT_DIR, path_filename(dmg));
+        return true;
     }
 
     // The 256 px master, resized to every size up to it.
@@ -419,6 +491,7 @@ PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT
             log_error("Inno Setup could not make the installer (ran %). Install Inno Setup 6 from https://jrsoftware.org/isinfo.php, or set UPPIES_ISCC to its ISCC.exe.\n", iscc);
             return false;
         }
+        if !write_sha256_file(tprint("%/%/Uppies-%-setup.exe", #filepath, OUTPUT_DIR, APP_VERSION)) return false;
         print("Packaged %/Uppies-%-setup.exe\n", OUTPUT_DIR, APP_VERSION);
         return true;
     }
