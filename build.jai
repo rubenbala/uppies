@@ -37,7 +37,7 @@
 
 // The one place the version lives: the program gets it as APP_VERSION (the
 // About panel, the User-Agent), and so does the macOS bundle's Info.plist.
-APP_VERSION :: "1.0.0";
+APP_VERSION :: "1.0.1";
 
 OUTPUT_DIR :: "bin";
 EXE_NAME   :: "uppies";

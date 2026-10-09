@@ -68,7 +68,7 @@ Uppies is new and isn't code-signed yet. Click **More info**, then **Run anyway*
 
 Each download has a `.sha256` file next to it on the release page, holding its SHA-256 checksum.
 To check your download is exactly the one released, compare that with what
-`Get-FileHash Uppies-1.0.0-setup.exe` prints in PowerShell, or `shasum -a 256 Uppies-1.0.0-mac.dmg`
+`Get-FileHash Uppies-1.0.1-setup.exe` prints in PowerShell, or `shasum -a 256 Uppies-1.0.1-mac.dmg`
 in the Mac's Terminal.
 
 ## Your money and your privacy

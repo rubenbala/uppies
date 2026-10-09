@@ -6,7 +6,7 @@
 ; passing the version from build.jai, so it lives in one place. To compile it
 ; by hand (from the Inno Setup IDE, say), build first and give the version:
 ;
-;     ISCC /DAppVersion=1.0.0 installer\uppies.iss
+;     ISCC /DAppVersion=1.0.1 installer\uppies.iss
 ;
 ; Uppies installs per user by default, into %LOCALAPPDATA%\Programs\Uppies,
 ; without asking for administrator rights; the first page offers to install
