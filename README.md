@@ -1,6 +1,6 @@
 # Uppies
 
-**Your Up account, on your desktop.**
+**A fast, native desktop application for your Up account**
 
 <img width="1896" height="1197" alt="Screenshot 2026-10-09 15_36_35 - uppies_4" src="https://github.com/user-attachments/assets/da92e30f-5d8e-425a-9d37-d34d85888b3e" />
 
