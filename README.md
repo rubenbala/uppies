@@ -128,7 +128,7 @@ for screenshots. If it's a security problem, please report it privately instead 
 
 ## Building from source
 
-Uppies is written in [Jai](https://jai.community). The compiler is in closed beta, so you'll need
+Uppies is written in a beta programming language by Jonathan Blow, commonly known as "JAI". The compiler is in closed beta, so you'll need
 beta access and `jai` on your PATH.
 
 ```bash
