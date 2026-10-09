@@ -16,7 +16,7 @@ selftest :: () -> int {
     accounts: [..] Account;
     for * json_array(json_get(*doc, "data")) array_add(*accounts, parse_account(it));
     store_merge_accounts(*store, accounts);
-    check(store.accounts.count == 6, tprint("6 accounts (got %)", store.accounts.count));
+    check(store.accounts.count == 7, tprint("7 accounts (got %)", store.accounts.count));
     for store.accounts print("      % % % %\n", it.name, it.type, it.ownership, format_money(it.balance));
 
     r = demo_execute("GET", "/api/v1/categories", "");
@@ -51,12 +51,14 @@ selftest :: () -> int {
     check(held > 0, tprint("held transactions present (%)", held));
 
     // Each account's balance minus everything in its history is the balance
-    // it had before the history starts; it must not be negative.
+    // it had before the history starts; it must not be negative (but for a
+    // loan, which starts at what was borrowed).
     for a, ai: store.accounts {
         sum: s64;
         for store.transactions if it.account == ai sum += balance_effect(*it);
         print("      % balance % = opening % + history %\n", a.name, format_money(a.balance), format_money(a.balance - sum), format_money(sum));
-        check(a.balance - sum >= 0, tprint("% opening balance not negative", a.name));
+        if a.type == .HOME_LOAN check(a.balance - sum < 0, tprint("% opening balance is what was borrowed", a.name));
+        else check(a.balance - sum >= 0, tprint("% opening balance not negative", a.name));
     }
 
     t := *store.transactions[0];
@@ -141,6 +143,65 @@ selftest :: () -> int {
     check(!stray.count, tprint("recurring: nothing found in everyday spending (found: %)", stray));
     check(rec.subscriptions_monthly > 0 && rec.bills_monthly > 0 && rec.income_monthly > 0, tprint("recurring: monthly totals (subscriptions %, bills %, income %)",
           format_money(rec.subscriptions_monthly), format_money(rec.bills_monthly), format_money(rec.income_monthly)));
+
+    // The home loan left out of totals: its balance and its interest leave
+    // them, and the repayments into it become money out. On its own it is
+    // still shown in full.
+    {
+        loan, spending := -1, -1;
+        for store.accounts {
+            if it.type == .HOME_LOAN loan = it_index;
+            if it.name == "Spending" spending = it_index;
+        }
+        check(loan >= 0 && spending >= 0, "excluded: the sample has a home loan");
+        if loan >= 0 && spending >= 0 {
+            settings.exclude_transfers = true;
+            p := Period.{today - 89, today};
+            repaid, interest: s64;
+            for * store.transactions {
+                if it.day < p.first || it.day > p.last continue;
+                if it.account == spending && it.transfer_account == loan repaid -= it.amount;
+                if it.account == loan && !is_transfer(it) && it.amount < 0 interest -= it.amount;
+            }
+            check(repaid > 0 && interest > 0, tprint("excluded: repayments (%) and interest (%) in 90 days", format_money(repaid), format_money(interest)));
+
+            analytics_update(today);
+            total := total_balance_at(today);
+            flow := period_flow(p);
+            alone := period_flow(p, loan);
+            month := month_key_from_day(today) - analytics.first_month;
+            month_out := analytics.month_out[month];
+            month_flow := period_flow(.{first_day_of_month(month_key_from_day(today)), today});
+
+            array_add(*user_data.excluded_ids, copy_string(store.accounts[loan].id));
+            user_data.excluded_version += 1;
+            analytics_update(today);
+            check(account_excluded(loan) && !account_excluded(spending) && excluded_count == 1, "excluded: only the loan");
+            check(total_balance_at(today) == total - store.accounts[loan].balance, "excluded: its balance leaves the total");
+            after := period_flow(p);
+            check(after.money_out == flow.money_out - interest + repaid && after.money_in == flow.money_in,
+                  tprint("excluded: money out % → % (less interest, plus repayments)", format_money(flow.money_out), format_money(after.money_out)));
+            month_after := period_flow(.{first_day_of_month(month_key_from_day(today)), today});
+            check(analytics.month_out[month] - month_out == month_after.money_out - month_flow.money_out, "excluded: this month's money out agrees with the period's");
+            alone_after := period_flow(p, loan);
+            check(alone_after.money_out == alone.money_out && alone_after.money_in == alone.money_in, "excluded: on its own it is shown in full");
+            excluded_rec: Recurring_State;
+            recurring_compute(*excluded_rec, *store, today);
+            repayment := find_series(*excluded_rec, "Transfer to Home Loan");
+            check(!find_series(*rec, "Transfer to Home Loan") && repayment && repayment.kind == .BILL && repayment.cadence == .MONTHLY && repayment.active,
+                  "excluded: repayments into it are a monthly bill");
+
+            recurring.hidden.count = 0;
+            array_add(*recurring.hidden, 0xC0FFEE);
+            text := user_data_text();
+            user_data_parse(tprint("%\nsomething-newer 1\n", text));
+            check(recurring.hidden.count == 1 && recurring.hidden[0] == 0xC0FFEE && user_data.excluded_ids.count == 1 && user_data.excluded_ids[0] == store.accounts[loan].id,
+                  "user.bin: hidden series and excluded accounts read back, newer lines skipped");
+            user_data_parse("");
+            analytics_update(today);
+            check(!excluded_count && total_balance_at(today) == total, "excluded: counted again");
+        }
+    }
 
     // Edge cases, on a made-up history.
     {

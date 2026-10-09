@@ -6,6 +6,12 @@
 // "exclude transfers" setting is off. Balance history is reconstructed by
 // walking back from today's balance through every transaction's effect on
 // its account (its amount plus any Round Up swept alongside it).
+//
+// An account the customer leaves out of totals (Configure on the Accounts
+// page) is treated as someone else's: its balance and its own transactions
+// count towards no total, and money moved to or from it is income or
+// spending, not a transfer between their own accounts. Asked about on its
+// own (one account chosen), it is still shown in full.
 
 Tag_Stat :: struct {
     count:     int;
@@ -19,6 +25,7 @@ Analytics :: struct {
     version: u64;
     today:   s64;
     exclude_transfers: bool;
+    excluded_version: u64;
     computed: bool;
 
     first_day: s64;
@@ -51,16 +58,51 @@ Analytics :: struct {
 
 analytics: Analytics;
 
+// By account index: left out of totals. Rebuilt when the accounts or the
+// customer's choice change.
+excluded_accounts: [..] bool;
+excluded_count: int;
+excluded_key: u64;
+
+excluded_update :: () {
+    key := hash_key(store.version, user_data.excluded_version);
+    if key == excluded_key return;
+    excluded_key = key;
+    array_resize(*excluded_accounts, store.accounts.count);
+    excluded_count = 0;
+    for store.accounts {
+        excluded_accounts[it_index] = array_find(user_data.excluded_ids, it.id);
+        if excluded_accounts[it_index] excluded_count += 1;
+    }
+}
+
+account_excluded :: inline (account: int) -> bool {
+    return account >= 0 && account < excluded_accounts.count && excluded_accounts[account];
+}
+
+// A move between two accounts that both count: neither income nor spending.
+is_own_transfer :: inline (t: *Transaction) -> bool {
+    return is_transfer(t) && !account_excluded(t.transfer_account);
+}
+
+// Money in or out of its own account (for one account's figures).
 counts_as_flow :: inline (t: *Transaction) -> bool {
-    return !(analytics.exclude_transfers && is_transfer(t));
+    return !(analytics.exclude_transfers && is_own_transfer(t));
+}
+
+// Money in or out of the customer's accounts taken together.
+counts_in_totals :: inline (t: *Transaction) -> bool {
+    return !account_excluded(t.account) && counts_as_flow(t);
 }
 
 analytics_update :: (today: s64) {
+    excluded_update();
     a := *analytics;
-    if a.computed && a.version == store.version && a.today == today && a.exclude_transfers == settings.exclude_transfers return;
+    if a.computed && a.version == store.version && a.today == today && a.exclude_transfers == settings.exclude_transfers && a.excluded_version == user_data.excluded_version return;
     a.version = store.version;
     a.today = today;
     a.exclude_transfers = settings.exclude_transfers;
+    a.excluded_version = user_data.excluded_version;
     a.computed = true;
 
     txns := store.transactions;
@@ -100,7 +142,7 @@ analytics_update :: (today: s64) {
         d := t.day - a.first_day;
         if d < 0 || d >= a.day_count continue;
         m := t.month - a.first_month;
-        flow := counts_as_flow(t);
+        flow := counts_in_totals(t);
         if t.status == .HELD { a.held_count += 1; a.held_total += t.amount; }
         if flow {
             if t.amount > 0 { a.day_in[d] += t.amount; a.month_in[m] += t.amount; }
@@ -114,7 +156,7 @@ analytics_update :: (today: s64) {
             a.uncategorised_count += 1;
             a.uncategorised_total += t.amount;
         }
-        if t.account >= 0 && today - t.day < 30 && flow {
+        if t.account >= 0 && today - t.day < 30 && counts_as_flow(t) {
             if t.amount > 0 a.acct_in_30[t.account] += t.amount;
             else a.acct_out_30[t.account] -= t.amount;
             a.acct_n_30[t.account] += 1;
@@ -156,7 +198,7 @@ balance_at :: (account: int, day: s64) -> s64 {
 total_balance_at :: (day: s64, types: Account_Type = .OTHER) -> s64 {
     total: s64;
     for store.accounts {
-        if types != .OTHER && it.type != types continue;
+        if account_excluded(it_index) || (types != .OTHER && it.type != types) continue;
         total += balance_at(it_index, day);
     }
     return total;
@@ -214,6 +256,13 @@ month_period :: (key: int) -> Period {
     return .{first, first + days_in_month(key) - 1};
 }
 
+// Whether t counts towards one account's figures, or (account -1) towards
+// the customer's totals.
+counts_for :: inline (t: *Transaction, account: int) -> bool {
+    if account >= 0 return t.account == account && counts_as_flow(t);
+    return counts_in_totals(t);
+}
+
 Flow_Totals :: struct {
     money_in:  s64;
     money_out: s64;
@@ -222,15 +271,14 @@ Flow_Totals :: struct {
     largest_out_index: s32 = -1;
 }
 
-// Totals over a period for one account (-1: all).
+// Totals over a period for one account (-1: the ones that count, together).
 period_flow :: (p: Period, account := -1) -> Flow_Totals {
     totals: Flow_Totals;
     for * t: store.transactions {
         if t.day > p.last continue;
         if t.day < p.first - 1 break;   // Newest first: nothing older matters (a day of slack for offset changes).
         if t.day < p.first continue;
-        if account >= 0 && t.account != account continue;
-        if !counts_as_flow(t) continue;
+        if !counts_for(t, account) continue;
         totals.count += 1;
         if t.amount > 0 totals.money_in += t.amount;
         else {
@@ -270,7 +318,7 @@ spend_cache_used: [SPEND_CACHE_SIZE] u64;
 
 spend_breakdown :: (p: Period, account := -1) -> *Spend_Breakdown {
     prev := comparison_period(p);
-    key := hash_key(store.version, cast(u64) p.first, cast(u64) p.last, cast(u64) (account + 7), cast(u64) settings.exclude_transfers, cast(u64) prev.first, cast(u64) prev.last);
+    key := hash_key(store.version, cast(u64) p.first, cast(u64) p.last, cast(u64) (account + 7), cast(u64) settings.exclude_transfers, cast(u64) prev.first, cast(u64) prev.last, user_data.excluded_version);
     slot := 0;
     for spend_cache {
         if it.key == key {
@@ -299,8 +347,7 @@ spend_breakdown :: (p: Period, account := -1) -> *Spend_Breakdown {
         in_current := t.day >= p.first;
         in_previous := t.day >= prev.first && t.day <= prev.last;
         if !in_current && !in_previous continue;
-        if account >= 0 && t.account != account continue;
-        if !counts_as_flow(t) || is_transfer(t) continue;
+        if !counts_for(t, account) || is_own_transfer(t) continue;
         slot := ifx t.category >= 0 then cast(int) t.category else ifx t.categorizable then n else n + 1;
         if slot >= n && t.amount > 0 continue;   // Incoming money isn't spending.
         if in_current { current[slot] -= t.amount; counts[slot] += 1; }
@@ -377,7 +424,7 @@ Merchant_List :: struct {
 merchant_cache: Merchant_List;
 
 merchants :: (p: Period, account := -1) -> *Merchant_List {
-    key := hash_key(store.version, cast(u64) p.first, cast(u64) p.last, cast(u64) (account + 7), cast(u64) settings.exclude_transfers);
+    key := hash_key(store.version, cast(u64) p.first, cast(u64) p.last, cast(u64) (account + 7), cast(u64) settings.exclude_transfers, user_data.excluded_version);
     m := *merchant_cache;
     if m.key == key return m;
     m.key = key;
@@ -390,6 +437,7 @@ merchants :: (p: Period, account := -1) -> *Merchant_List {
         if t.day < p.first - 1 break;
         if t.day < p.first continue;
         if account >= 0 && t.account != account continue;
+        if account < 0 && account_excluded(t.account) continue;
         if is_transfer(t) || t.amount >= 0 || !t.categorizable continue;
         found, index := table_find(*lookup, t.description);
         if !found {

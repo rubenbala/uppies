@@ -184,13 +184,16 @@ Data_Table :: struct {
     selection_changed: bool;
     hovered_row: int = -1;
     highlight:   bool;
+    actions_w:   float;    // The last column holds buttons: rows leave presses there to them.
 }
 
 CELL_PAD :: 10.0;
 
 // Without `highlight` the selected row is still the keyboard's position, but
 // isn't marked: the caller marks rows itself (when several can be chosen).
-table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: *Table_State, row_count: int, keyboard := false, row_height := 0.0, show_header := true, highlight := true) {
+// With `actions` the last column holds a button per row, which gets the
+// presses over it instead of the row.
+table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: *Table_State, row_count: int, keyboard := false, row_height := 0.0, show_header := true, highlight := true, actions := false) {
     t.id = ui_id(label);
     t.highlight = highlight;
     t.state = state;
@@ -228,6 +231,8 @@ table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: 
         t.w[i] = w;
         x += w;
     }
+    last := min(cols.count, MAX_COLUMNS) - 1;
+    t.actions_w = ifx actions && last >= 0 then r.x + r.w - t.x[last] else 0.0;
 
     // Header: sortable titles; the sorted one shows its direction.
     if show_header {
@@ -321,8 +326,9 @@ table_begin :: (t: *Data_Table, label: string, r: Rect, cols: [] Column, state: 
 table_row :: (t: *Data_Table, i: int) -> Rect {
     row := rect(t.body.x, t.body.y + i * t.row_h - t.offset, t.body.w - px(10), t.row_h);
     rid := ui_id_combine(t.id, cast(u64) i + 100_000);
-    io := ui_interact(rid, rect(row.x, row.y, t.body.w, row.h));
-    if io.hovered {
+    io := ui_interact(rid, rect(row.x, row.y, t.body.w - t.actions_w, row.h));
+    // Over a row's button the row still looks hovered.
+    if io.hovered || (t.actions_w > 0 && ui.active == 0 && ui_mouse_in(rect(row.x, row.y, t.body.w, row.h))) {
         t.hovered_row = i;
         if t.state.selected != i || !t.highlight draw_rect(snap(rect(row.x, row.y, t.body.w, row.h)), color_with_alpha(theme.hover, 0.55));
     }
@@ -386,11 +392,25 @@ draw_chip :: (x: float, cy: float, text: string, color: Color, icon := Icon.NONE
     size := px(theme.font_size_small);
     tw := measure_text(fonts.semibold, size, text);
     iw := ifx icon != .NONE then px(13) else 0.0;
-    r := snap(rect(x, cy - px(9), tw + iw + px(12), px(18)));
+    r := snap(rect(x, cy - px(9), chip_width(text, icon), px(18)));
     draw_rect_outline(r, color_with_alpha(color, 0.12), color_with_alpha(color, 0.30), hairline(), px(2));
     if icon != .NONE draw_icon(icon, r.x + px(6) + px(4), cy, px(9), color);
     draw_text_in_rect(fonts.semibold, size, rect(r.x + px(6) + iw, r.y, tw + px(2), r.h), text, color);
     return r.w;
+}
+
+chip_width :: (text: string, icon := Icon.NONE) -> float {
+    iw := ifx icon != .NONE then px(13) else 0.0;
+    return measure_text(fonts.semibold, px(theme.font_size_small), text) + iw + px(12);
+}
+
+// A name with a muted chip just after it; the name gives way when there
+// isn't room for both.
+draw_name_with_chip :: (r: Rect, size: float, name: string, color: Color, chip: string) {
+    room := max(r.w - chip_width(chip) - px(8), 0.0);
+    w := min(measure_text(fonts.regular, size, name), room);
+    draw_text_fit(fonts.regular, size, rect(r.x, r.y, room, r.h), name, color);
+    draw_chip(r.x + w + px(8), r.y + r.h * 0.5, chip, theme.text_muted);
 }
 
 draw_status :: (r: Rect, status: Txn_Status) {

@@ -5,9 +5,11 @@
 // here from the merchant, the dates and the amounts:
 //
 //   group    transactions by account, merchant (description) and direction,
-//            leaving out transfers between the customer's own accounts,
-//            purchases made in person (a tap or a PIN is never a merchant
-//            charging a card on file) and money into savers (interest).
+//            leaving out transfers between the customer's own accounts (a
+//            repayment into a loan left out of totals stays), accounts left
+//            out of totals, purchases made in person (a tap or a PIN is
+//            never a merchant charging a card on file) and money into savers
+//            (interest).
 //   split    card charges by amount: one merchant can bill for two
 //            subscriptions (Apple: iCloud and Apple Music). Direct debits,
 //            BPAY and income stay whole: their amounts vary.
@@ -23,9 +25,10 @@
 //
 // Series the customer says aren't recurring (recurring_set_hidden) are still
 // found, so they can be shown again, but count towards no totals. They are
-// kept in user.bin (see recurring_overrides_load).
+// kept in user.bin (see user_data.jai).
 //
-// Recomputed when the store, the day or the hidden set changes.
+// Recomputed when the store, the day, the hidden set or the accounts left
+// out of totals change.
 
 Recurring_Kind :: enum u8 { SUBSCRIPTION; BILL; INCOME; }
 RECURRING_KIND_LABELS :: string.["Subscription", "Bill", "Income"];
@@ -77,7 +80,7 @@ Recurring_State :: struct {
 recurring: Recurring_State;
 
 recurring_update :: (today: s64) {
-    key := hash_key(store.version, cast(u64) today, recurring.hidden_version);
+    key := hash_key(store.version, cast(u64) today, recurring.hidden_version, user_data.excluded_version);
     if recurring.key == key return;
     recurring.key = key;
     recurring_compute(*recurring, *store, today);
@@ -278,49 +281,10 @@ recurring_set_hidden :: (id: u64, hidden: bool) {
     if hidden array_add(*recurring.hidden, id);
     else array_unordered_remove_by_index(*recurring.hidden, index);
     recurring.hidden_version += 1;
-    recurring_overrides_save();
-}
-
-//
-// What the customer told us, in user.bin: sealed like token.bin (only this
-// user on this machine can read it), and not part of store.uppies, which is
-// thrown away and downloaded again whenever the token changes. A line per
-// hidden series: "hide <id in hex>".
-//
-
-recurring_overrides_load :: () {
-    recurring.hidden.count = 0;
-    recurring.hidden_version += 1;
-    if !persist_enabled return;
-    cipher, ok := read_entire_file(user_data_path(),, temp);
-    if !ok || !cipher.count return;
-    plain, opened := platform_unprotect(cipher, USER_DATA_ENTROPY);
-    if !opened return;
-    defer free(plain);
-    for line: split(plain, "\n",, temp) {
-        found, command, value := split_from_left(trim(line), " ");
-        if !found || command != "hide" continue;
-        id, id_ok := string_to_int(trim(value), 16, u64);
-        if id_ok && !array_find(recurring.hidden, id) array_add(*recurring.hidden, id);
-    }
-}
-
-recurring_overrides_save :: () {
-    if !persist_enabled return;
-    builder: String_Builder;
-    builder.allocator = temp;
-    for recurring.hidden print_to_builder(*builder, "hide %\n", formatInt(it, base = 16));
-    cipher, ok := platform_protect(builder_to_string(*builder,, temp), USER_DATA_ENTROPY);
-    if !ok { app_toast(.ERROR, "Couldn't save that change on this device."); return; }
-    defer free(cipher);
-    write_entire_file(user_data_path(), cipher);
+    user_data_save();
 }
 
 #scope_file
-
-USER_DATA_ENTROPY :: "user-data";
-
-user_data_path :: () -> string { return tprint("%/user.bin", platform_app_data_dir()); }
 
 Charge :: struct {
     index:  s32;
@@ -336,9 +300,11 @@ Fit :: struct {
 
 // Could this transaction be one of a series?
 could_recur :: (s: *Store, t: *Transaction) -> bool {
-    if is_transfer(t) || t.amount == 0 || t.account < 0 || t.account >= s.accounts.count return false;
-    // Money into savers is interest and transfers; pay goes to spending accounts.
+    if is_own_transfer(t) || t.amount == 0 || t.account < 0 || t.account >= s.accounts.count || account_excluded(t.account) return false;
+    // Money into savers is interest and transfers; pay goes to spending
+    // accounts. Money out of a home loan is its interest.
     if t.amount > 0 return s.accounts[t.account].type == .TRANSACTIONAL;
+    if s.accounts[t.account].type == .HOME_LOAN return false;
     if t.card_method == {
         case .CONTACTLESS; #through;
         case .CARD_PIN; #through;

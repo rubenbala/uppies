@@ -85,7 +85,7 @@ app_init :: (start_demo := false) {
     settings_load();
     themes_load(themes_dir());
     theme_select(settings.theme, instant = true);
-    recurring_overrides_load();
+    user_data_load();
     renderer_settings.vsync = settings.vsync;
     ui.motion = ifx settings.reduce_motion then 0.0 else 1.0;
     api_init();

@@ -30,6 +30,7 @@ draw_overview_page :: (r_in: Rect) {
     total, spending, savers: s64;
     saver_count := 0;
     for store.accounts {
+        if account_excluded(it_index) continue;
         total += it.balance;
         if it.type == .TRANSACTIONAL spending += it.balance;
         if it.type == .SAVER { savers += it.balance; saver_count += 1; }
@@ -40,9 +41,11 @@ draw_overview_page :: (r_in: Rect) {
     strip := cut_top(*r, px(METRIC_STRIP_HEIGHT));
     cut_top(*r, px(8));
     out_delta := format_change_percent(month_out, last_flow.money_out);
+    net_tooltip := "Every account's balance added together, held amounts included.";
+    if excluded_count net_tooltip = tprint("Your accounts' balances added together, held amounts included. % left out of totals (Configure, on the Accounts page).", format_count(excluded_count, "account", "accounts"));
     metrics := Metric.[
         .{label = "Net position", value = format_money(total), detail = tprint("% vs 30 days ago", format_money(change, .ALWAYS)), loading = no_data,
-          tooltip = "Every account's balance added together, held amounts included."},
+          tooltip = net_tooltip},
         .{label = "Spending accounts", value = format_money(spending), detail = "available now", loading = no_data},
         .{label = "Savers", value = format_money(savers), detail = format_count(saver_count, "saver", "savers"), loading = no_data},
         .{label = "On hold", value = format_money(-a.held_total), value_color = ifx a.held_count then theme.held else 0, detail = format_count(a.held_count, "transaction waiting", "transactions waiting"), loading = no_data},
@@ -119,8 +122,10 @@ draw_accounts_panel :: (r: Rect, st: *Overview_State) {
         acct := order[i];
         account := *store.accounts[acct];
         row := table_row(*tbl, i);
+        excluded := account_excluded(acct);
         name := table_cell(*tbl, row, 0);
-        draw_text_fit(fonts.regular, px(theme.font_size_body), name, account.name, theme.text);
+        if excluded draw_name_with_chip(name, px(theme.font_size_body), account.name, theme.text_muted, "Not in totals");
+        else draw_text_fit(fonts.regular, px(theme.font_size_body), name, account.name, theme.text);
         if table_column_shown(*tbl, 1) draw_text_fit(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 1), account_type_label(account), theme.text_muted);
         if table_column_shown(*tbl, 2) && a.day_count > 30 {
             cell := table_cell(*tbl, row, 2);
@@ -130,7 +135,7 @@ draw_accounts_panel :: (r: Rect, st: *Overview_State) {
         change := account.balance - balance_at(acct, app.today - 30);
         change_text := ifx change == 0 then "—" else format_money(change, .ALWAYS);
         draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 3), change_text, ifx change > 0 then theme.positive else ifx change < 0 then theme.text_secondary else theme.text_faint, .RIGHT, .{tabular = true});
-        draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 4), format_money(account.balance), theme.text, .RIGHT, .{tabular = true});
+        draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 4), format_money(account.balance), ifx excluded then theme.text_muted else theme.text, .RIGHT, .{tabular = true});
     }
     table_end(*tbl);
     if tbl.clicked >= 0 show_account(order[tbl.clicked]);

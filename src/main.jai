@@ -66,6 +66,7 @@ FT :: #import "freetype";
 #load "app/local_data.jai";
 #load "app/analytics.jai";
 #load "app/recurring.jai";
+#load "app/user_data.jai";
 #load "app/undo.jai";
 #load "app/common.jai";
 #load "app/widgets.jai";

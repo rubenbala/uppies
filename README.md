@@ -40,7 +40,9 @@ from your history. You'll see what they add up to each month, what's due in the 
 when a price goes up. If it gets one wrong, hide it.
 
 **Watch your accounts over time.** Follow each balance month by month, or select a few accounts
-to see them added together.
+to see them added together. Have a home loan that swamps your cash? Click **Configure** beside it
+and turn off **Include in totals**. Its balance and activity then stay out of your net position,
+cash flow and spending everywhere, and repayments into it count as money out.
 
 If you use Up's webhooks, there's a page to create, test and delete them and to read their
 delivery logs.

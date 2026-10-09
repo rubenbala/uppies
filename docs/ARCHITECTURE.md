@@ -201,8 +201,13 @@ history. It groups transactions by account, merchant and direction (leaving out 
 purchases made in person and money into savers), splits card charges by price, joins price
 groups that follow one another on one schedule (a price rise), fits the gaps between charges to
 weekly through yearly, and predicts the next date and amount. Bills and pay stay whole, since
-their amounts vary. Series the customer hides are kept in `user.bin`, sealed with
-`platform_protect` and apart from `store.uppies`, which is thrown away with the token. The
+their amounts vary. Series the customer hides are kept in `user.bin` (`app/user_data.jai`), sealed with
+`platform_protect` and apart from `store.uppies`, which is thrown away with the token.
+`user.bin` also holds the accounts left out of totals, by Up account id. `analytics.jai` turns them
+into a flag per account index (`account_excluded`), and every all-accounts sum goes through
+`counts_in_totals` and skips their balances. Money moved to or from such an account is not an own
+transfer (`is_own_transfer`), so a loan repayment counts as money out. One account asked about on
+its own is still shown in full. The choice's version is part of each cache key. The
 self-test runs it over the sample history, which has the cases (a price rise, two subscriptions
 from one merchant, the 31st, a cancellation, a yearly renewal, quarterly bills), and over a
 made-up one for the edge cases. Sample-data mode answers the same requests from `up/demo.jai`, so paging,

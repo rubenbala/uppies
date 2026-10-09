@@ -2,7 +2,8 @@
 // ones chosen in it, their balance over time and month-by-month ledger.
 // Clicking a row chooses that account alone; Ctrl+click (or Shift+click for
 // a run of rows) chooses several, and everything beside the table adds them
-// together.
+// together. Each row's Configure button can leave the account out of totals
+// across the app (a home loan, say), which dims it here and on the Overview.
 
 Accounts_State :: struct {
     checked: [..] bool;    // By account index: the chosen accounts. Empty until the accounts arrive.
@@ -14,6 +15,8 @@ Accounts_State :: struct {
     months_key:   u64;
     months:       [..] Account_Month;
     balances:     [..] s64;   // The chosen accounts' end-of-day balance, together, from analytics.first_day.
+    config_account: int = -1;   // The account whose Configure popup is open (or last was).
+    config_closing: bool;       // A press on its button closed the popup: the click that follows mustn't reopen it.
 }
 
 Account_Month :: struct {
@@ -55,6 +58,7 @@ draw_accounts_page :: (r_in: Rect) {
     total, total_before, spending, savers: s64;
     saver_count, spending_count := 0, 0;
     for store.accounts {
+        if account_excluded(it_index) continue;
         total += it.balance;
         total_before += balance_at(it_index, period.first - 1);
         if it.type == .TRANSACTIONAL { spending += it.balance; spending_count += 1; }
@@ -64,11 +68,13 @@ draw_accounts_page :: (r_in: Rect) {
     no_data := !store.accounts.count;
     range_name := to_lower_temp(RANGE_LABELS[st.range]);
     if st.range == 3 range_name = "all history";
+    counted := format_count(store.accounts.count - excluded_count, "account", "accounts");
+    if excluded_count counted = tprint("% · % left out", counted, excluded_count);
 
     strip := cut_top(*r, px(METRIC_STRIP_HEIGHT));
     cut_top(*r, px(8));
     metrics := Metric.[
-        .{label = "Total balance", value = format_money(total), detail = format_count(store.accounts.count, "account", "accounts"), loading = no_data},
+        .{label = "Total balance", value = format_money(total), detail = counted, loading = no_data},
         .{label = "Change", value = format_money(change, .ALWAYS), value_color = ifx change > 0 then theme.positive else 0, detail = tprint("over %", range_name), loading = no_data},
         .{label = "Money in", value = format_money(flow.money_in), value_color = ifx flow.money_in then theme.positive else 0, detail = tprint("over %", range_name), loading = no_data},
         .{label = "Money out", value = format_money(flow.money_out), detail = tprint("over %", range_name), loading = no_data, roll_up = false},
@@ -179,12 +185,14 @@ chosen_flow :: (st: *Accounts_State, p: Period) -> Flow_Totals {
 
 ACCOUNT_TABLE_COLUMNS :: Column.[
     .{"Account",  0,   .LEFT,  false, 0},
-    .{"Type",     92,  .LEFT,  false, 660},
+    .{"Type",     92,  .LEFT,  false, 740},
     .{"Change",   96,  .RIGHT, false, 0},
-    .{"In",       92,  .RIGHT, false, 560},
-    .{"Out",      92,  .RIGHT, false, 560},
+    .{"In",       92,  .RIGHT, false, 640},
+    .{"Out",      92,  .RIGHT, false, 640},
     .{"Balance",  110, .RIGHT, false, 0},
+    .{"",         96,  .RIGHT, false, 0},   // Configure.
 ];
+COL_CONFIGURE :: 6;
 
 draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Period) {
     content, _ := panel_begin(r, "Accounts", tprint("% · % or Shift+click to add accounts together", to_lower_temp(RANGE_LABELS[st.range]), MOD_CLICK));
@@ -203,7 +211,9 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
     tbl: Data_Table;
     body := content;
     totals_r := cut_bottom(*body, px(34));
-    table_begin(*tbl, "accounts-table", body, ACCOUNT_TABLE_COLUMNS, *st.table, order.count, keyboard = true, row_height = px(36), highlight = single);
+    table_begin(*tbl, "accounts-table", body, ACCOUNT_TABLE_COLUMNS, *st.table, order.count, keyboard = true, row_height = px(36), highlight = single, actions = true);
+    config_id := ui_id("account-config");
+    config_anchor: Rect;
 
     if !order.count {
         table_end(*tbl);
@@ -219,10 +229,20 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
             draw_rect(mark, theme.accent_wash);
             draw_rect(snap(rect(mark.x, mark.y, px(2), mark.h)), theme.accent);
         }
+        excluded := account_excluded(acct);
         name := table_cell(*tbl, row, 0);
-        draw_text_fit(fonts.regular, px(theme.font_size_body), rect(name.x, name.y + px(3), name.w, px(18)), a.name, theme.text);
-        owner := ifx a.ownership == .JOINT then "Joint" else "Individual";
-        draw_text_fit(fonts.regular, px(theme.font_size_small), rect(name.x, name.y + px(19), name.w, px(14)), tprint("% · since %", owner, format_date(ts_day(a.created))), theme.text_muted);
+        draw_text_fit(fonts.regular, px(theme.font_size_body), rect(name.x, name.y + px(3), name.w, px(18)), a.name, ifx excluded then theme.text_muted else theme.text);
+        // The column is narrow: being left out of totals takes the place of who owns it.
+        sub := rect(name.x, name.y + px(19), name.w, px(14));
+        since := tprint("since %", format_date(ts_day(a.created)));
+        if excluded {
+            w := draw_text_in_rect(fonts.semibold, px(theme.font_size_small), sub, "Not in totals", theme.text_secondary);
+            cut_left(*sub, w);
+            draw_text_fit(fonts.regular, px(theme.font_size_small), sub, tprint(" · %", since), theme.text_muted);
+        } else {
+            owner := ifx a.ownership == .JOINT then "Joint" else "Individual";
+            draw_text_fit(fonts.regular, px(theme.font_size_small), sub, tprint("% · %", owner, since), theme.text_muted);
+        }
         if table_column_shown(*tbl, 1) draw_text_fit(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 1), account_type_label(a), theme.text_secondary);
         change := a.balance - balance_at(acct, period.first - 1);
         draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 2), ifx change then format_money(change, .ALWAYS) else "—",
@@ -232,9 +252,36 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
             draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 3), ifx f.money_in then format_money(f.money_in) else "—", ifx f.money_in then theme.text_secondary else theme.text_faint, .RIGHT, .{tabular = true});
             draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 4), ifx f.money_out then format_money(f.money_out) else "—", ifx f.money_out then theme.text_secondary else theme.text_faint, .RIGHT, .{tabular = true});
         }
-        draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 5), format_money(a.balance), theme.text, .RIGHT, .{tabular = true});
+        draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 5), format_money(a.balance), ifx excluded then theme.text_muted else theme.text, .RIGHT, .{tabular = true});
+
+        // Configure opens a popup below the button. A press on the button
+        // while its popup is open closes it (ui_begin_frame), and that's all.
+        cell := table_cell(*tbl, row, COL_CONFIGURE);
+        button_w := ui_button_width("Configure");
+        button_r := rect(cell.x + cell.w - button_w, row.y + (row.h - px(24)) * 0.5, button_w, px(24));
+        if st.config_account == acct {
+            config_anchor = button_r;
+            if !ui.popup && ui.popup_opened == ui.frame st.config_closing = true;
+        }
+        if ui_button(tprint("Configure##account-config-%", acct), button_r) {
+            if st.config_account == acct && st.config_closing st.config_closing = false;
+            else {
+                st.config_account = acct;
+                ui_open_popup(config_id, button_r);
+                config_anchor = button_r;
+            }
+        }
     }
     table_end(*tbl);
+    if !input.mouse_down[Mouse_Button.LEFT] st.config_closing = false;
+    if ui_popup_is_open(config_id) {
+        // Its row scrolled out of view, or the account went: the popup goes too.
+        if config_anchor.w <= 0 || st.config_account < 0 || st.config_account >= store.accounts.count ui_close_popup();
+        else {
+            ui.popup_anchor = config_anchor;   // It follows its row as the table scrolls.
+            draw_account_config(config_id, st.config_account);
+        }
+    }
     if tbl.clicked >= 0 {
         pick_on_click(st, order, tbl.clicked);
     } else if tbl.selection_changed && st.table.selected >= 0 && st.table.selected < order.count {
@@ -250,11 +297,15 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
     total, before: s64;
     for store.accounts {
         if some && !st.checked[it_index] continue;
+        if !some && account_excluded(it_index) continue;
         total += it.balance;
         before += balance_at(it_index, period.first - 1);
     }
     f := ifx some then chosen_flow(st, period) else period_flow(period);
-    label := ifx some then tprint("Selected · % of % accounts", count, order.count) else tprint("Total · % accounts", store.accounts.count);
+    label: string;
+    if some label = tprint("Selected · % of % accounts", count, order.count);
+    else if excluded_count label = tprint("Total · % of % accounts", store.accounts.count - excluded_count, store.accounts.count);
+    else label = tprint("Total · % accounts", store.accounts.count);
     draw_text_in_rect(fonts.semibold, px(theme.font_size_label), table_cell(*tbl, row, 0), label, ifx some then theme.accent else theme.text_secondary);
     change := total - before;
     draw_text_in_rect(fonts.semibold, px(theme.font_size_label), table_cell(*tbl, row, 2), format_money(change, .ALWAYS), ifx change > 0 then theme.positive else theme.text_secondary, .RIGHT, .{tabular = true});
@@ -263,6 +314,30 @@ draw_account_table :: (r: Rect, st: *Accounts_State, order: [] s32, period: Peri
         draw_text_in_rect(fonts.semibold, px(theme.font_size_label), table_cell(*tbl, row, 4), format_money(f.money_out), theme.text_secondary, .RIGHT, .{tabular = true});
     }
     draw_text_in_rect(fonts.semibold, px(theme.font_size_body), table_cell(*tbl, row, 5), format_money(total), theme.text, .RIGHT, .{tabular = true});
+}
+
+// Whether the account counts towards totals. The switch changes that at
+// once and saves it (user.bin).
+draw_account_config :: (id: UI_Id, account: int) {
+    a := *store.accounts[account];
+    included := !account_excluded(account);
+    visible, area := ui_popup_begin(id, px(300), px(140), align_right = true);
+    if !visible return;
+    defer ui_popup_end();
+    inner := rect_inset_xy(area, px(14), px(12));
+    draw_text_fit(fonts.semibold, px(theme.font_size_body), cut_top(*inner, px(20)), a.name, theme.text);
+    draw_text_fit(fonts.regular, px(theme.font_size_label), cut_top(*inner, px(16)), tprint("% · %", account_type_label(a), format_money(a.balance)), theme.text_muted);
+    cut_top(*inner, px(8));
+    ui_divider(area.x, inner.y, area.w, theme.divider);
+    cut_top(*inner, px(4));
+    // Space or Enter works the switch while the popup is open.
+    key_toggle := !ui.text_focus_prev && (key_pressed(.SPACE) || key_pressed(.ENTER));
+    if key_toggle { input.key_pressed[Key.SPACE] = false; input.key_pressed[Key.ENTER] = false; }
+    toggled := ui_toggle("Include in totals##account-config", cut_top(*inner, px(40)), *included, "Net position, cash flow and spending");
+    if key_toggle && !toggled { included = !included; toggled = true; }
+    if toggled account_set_excluded(account, !included);
+    note := ifx included then "Counted with your other accounts." else "Money moved to or from it counts as in or out.";
+    draw_text_fit(fonts.regular, px(theme.font_size_small), cut_top(*inner, px(16)), note, theme.text_muted);
 }
 
 // A plain click chooses one account; Ctrl+click adds or removes one (but
@@ -291,7 +366,7 @@ pick_on_click :: (st: *Accounts_State, order: [] s32, clicked: int) {
 // Their combined daily balance, and their months (newest first) in one pass
 // over the transactions.
 update_history :: (st: *Accounts_State) {
-    key := hash_key(store.version, chosen_key(st), cast(u64) app.today, cast(u64) settings.exclude_transfers);
+    key := hash_key(store.version, chosen_key(st), cast(u64) app.today, cast(u64) settings.exclude_transfers, user_data.excluded_version);
     if key == st.months_key return;
     st.months_key = key;
     st.months.count = 0;

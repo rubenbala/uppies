@@ -414,7 +414,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
     search := to_lower_temp(trim(buffer_string(*st.search)));
     key := hash_key(store.version, cast(u64) st.period, cast(u64) st.account, cast(u64) st.category, cast(u64) st.status, cast(u64) st.direction,
                     cast(u64) (st.table.sort_column + 3), cast(u64) st.table.sort_desc, cast(u64) app.today, cast(u64) (st.tag + 5), cast(u64) settings.exclude_transfers, cast(u64) st.hide_transfers,
-                    cast(u64) hash_key_string(search));
+                    cast(u64) hash_key_string(search), user_data.excluded_version);
     if key == st.rows_key return;
     st.rows_key = key;
 
@@ -436,11 +436,11 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         if st.status == 2 && txn.status != .SETTLED continue;
         if st.direction == 1 && txn.amount <= 0 continue;
         if st.direction == 2 && txn.amount >= 0 continue;
-        if st.hide_transfers && is_transfer(txn) continue;
+        if st.hide_transfers && is_own_transfer(txn) continue;
         if !tag_matches(txn, st.tag) continue;
         if !txn_matches(txn, search) continue;
         array_add(*indices, cast(s32) i);
-        if counts_as_flow(txn) {
+        if counts_for(txn, account) {
             st.totals.count += 1;
             if txn.amount > 0 st.totals.money_in += txn.amount;
             else {
@@ -494,7 +494,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
             }
             h := *st.rows[header_index];
             h.count += 1;
-            if counts_as_flow(txn) {
+            if counts_for(txn, account) {
                 if txn.amount > 0 h.money_in += txn.amount; else h.money_out -= txn.amount;
             }
             array_add(*st.rows, .{txn = it, day = txn.day});

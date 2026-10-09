@@ -4,6 +4,7 @@
 // links, filters, error documents, 204s for writes), so sample mode runs the
 // real client, sync and parsing code. The data is generated once from a fixed
 // seed: about two years of a plausible Melbourne customer - pay, rent, bills,
+// a house bought five months ago and its home loan,
 // savers and Round Ups, a joint 2Up account, a trip to Japan in yen - ending
 // today, with the last day's card purchases still held.
 //
@@ -60,7 +61,7 @@ demo_mutex: Mutex;
 Demo_Account :: struct {
     id:        string;
     name:      string;
-    type:      string;   // TRANSACTIONAL / SAVER
+    type:      string;   // TRANSACTIONAL / SAVER / HOME_LOAN
     ownership: string;   // INDIVIDUAL / JOINT
     balance:   s64;
     created:   s64;      // UTC seconds
@@ -169,6 +170,7 @@ EMERGENCY:: 2;
 BILLS    :: 3;
 TRIP     :: 4;
 HOUSE    :: 5;
+LOAN     :: 6;
 
 Merchant :: struct {
     name:     string;
@@ -267,7 +269,7 @@ TRIP_PLACES :: Trip_Place.[
 
 YEN_TO_CENTS :: 1.03;   // ~ 0.0103 AUD per yen.
 
-g_balances: [6] s64;
+g_balances: [7] s64;
 
 demo_generate :: () {
     demo.rng.state = 0x9E3779B97F4A7C15;
@@ -297,6 +299,10 @@ demo_generate :: () {
     add_account("Bills",            "SAVER",         "INDIVIDUAL", 45000,   start - 300);
     add_account("\xe2\x9c\x88\xef\xb8\x8f Japan 2026", "SAVER", "INDIVIDUAL", 0, start + 40);
     add_account("House Deposit",    "SAVER",         "INDIVIDUAL", 1450000, start - 400);
+    // The house is bought partway through: rent stops, and the monthly
+    // saving goes into repayments instead.
+    settlement := demo.today - 160;
+    add_account("Home Loan",        "HOME_LOAN",     "INDIVIDUAL", -52000000, settlement);
 
     joint_open := start + 210;
     round_up_start := start + 120;
@@ -323,12 +329,15 @@ demo_generate :: () {
             transfer(SPENDING, EMERGENCY, 25000, at(midnight, 6, 31));
             if day >= start + 40 && day < trip_start transfer(SPENDING, TRIP, 15000, at(midnight, 6, 32));
         }
-        if date.day == 15 transfer(SPENDING, HOUSE, 145000, at(midnight, 6, 40));
+        if date.day == 15 {
+            if day < settlement transfer(SPENDING, HOUSE, 145000, at(midnight, 6, 40));
+            else transfer(SPENDING, LOAN, 340000, at(midnight, 6, 40));
+        }
         // Bills covers the monthly direct debits.
         if date.day == 24 transfer(BILLS, SPENDING, 33000, at(midnight, 7, 15));
 
         // Rent, monthly.
-        if date.day == 1 {
+        if date.day == 1 && day < settlement {
             purchase(SPENDING, "Ray White Richmond", "BPAY RAY WHITE RICHMOND 2235", "rent-and-mortgage", 235000, at(midnight, 9, 5), "", "BPAY Payment");
         }
 
@@ -449,6 +458,11 @@ demo_generate :: () {
                 interest := cast(s64) (g_balances[acct] * 0.0510 / 12.0);
                 if interest <= 0 continue;
                 t := income(acct, "Interest", "", interest, local_midnight_utc(day) + 23 * 3600 + 30 * 60, "");
+                t.txn_type = "Interest";
+            }
+            // And charged on the home loan.
+            if day >= settlement {
+                t := income(LOAN, "Interest", "", cast(s64) (g_balances[LOAN] * 0.0614 / 12.0), local_midnight_utc(day) + 23 * 3600 + 40 * 60, "");
                 t.txn_type = "Interest";
             }
         }
