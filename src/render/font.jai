@@ -441,12 +441,15 @@ next_glyph :: inline (font: *Font, px: int, text: string, i: *int) -> *Glyph, u3
         }
         if !continues_emoji(next) && next != 0x200D && g.glyph_index != 0 return 0;
 
+        // Real sequences are under 40 bytes (a kiss with two skin tones). Past
+        // the cap, the rest of a long run of joiners and tags starts new glyphs.
+        limit := min(text.count, after + EMOJI_SEQUENCE_MAX_BYTES);
         end := after;
-        while end < text.count {
+        while end < limit {
             next, next_end = peek_code_point(text, end);
             if continues_emoji(next) {
                 end = next_end;
-            } else if next == 0x200D && next_end < text.count {
+            } else if next == 0x200D && next_end < limit {
                 _, end = peek_code_point(text, next_end);   // The joined emoji.
             } else {
                 break;
@@ -454,6 +457,8 @@ next_glyph :: inline (font: *Font, px: int, text: string, i: *int) -> *Glyph, u3
         }
         return end;
     }
+
+    EMOJI_SEQUENCE_MAX_BYTES :: 64;
 
     // Variation selector 16, keycap, skin tones, tags (subdivision flags).
     continues_emoji :: inline (cp: u32) -> bool {
@@ -486,13 +491,12 @@ next_glyph :: inline (font: *Font, px: int, text: string, i: *int) -> *Glyph, u3
         new_glyph.color = true;
         slot := *new_glyph.bins[0];
         slot.rasterized = true;   // Even on failure: don't retry every frame.
-        bitmap, ok := emoji_rasterize(px, sequence);
+        bitmap, ok := emoji_rasterize(px, sequence, COLOR_ATLAS_MAX_SIZE - 2 * GLYPH_PADDING);
         if ok {
             new_glyph.advance = bitmap.advance;
             if bitmap.w > 0 {
                 x, y, placed := atlas_allocate(*color_atlas, bitmap.w, bitmap.h);
-                if placed {
-                    atlas_write(*color_atlas, x, y, bitmap.w, bitmap.h, bitmap.pixels.data, bitmap.w * 4);
+                if placed && atlas_write(*color_atlas, x, y, bitmap.w, bitmap.h, bitmap.pixels.data, bitmap.w * 4) {
                     slot.x, slot.y = xx x, xx y;
                     slot.w, slot.h = xx bitmap.w, xx bitmap.h;
                     slot.left = xx bitmap.left;
@@ -536,7 +540,7 @@ rasterize_glyph :: (requested_font: *Font, px: int, g: *Glyph, bin: int) {
 
     x, y, ok := atlas_allocate(*glyph_atlas, w, h);
     if !ok return;
-    atlas_write(*glyph_atlas, x, y, w, h, bitmap.buffer, bitmap.pitch);
+    if !atlas_write(*glyph_atlas, x, y, w, h, bitmap.buffer, bitmap.pitch) return;
 
     slot.x, slot.y = xx x, xx y;
     slot.w, slot.h = xx w, xx h;
@@ -547,13 +551,17 @@ rasterize_glyph :: (requested_font: *Font, px: int, g: *Glyph, bin: int) {
 atlas_allocate :: (atlas: *Glyph_Atlas, w: s32, h: s32) -> s32, s32, bool {
     pw := w + GLYPH_PADDING;
     ph := h + GLYPH_PADDING;
+    // Larger than the largest atlas: clearing wouldn't make room, so it isn't
+    // drawn (and doesn't ask for a clear, which would repeat every frame).
+    max_size := ifx atlas.bytes_per_pixel == 1 then ATLAS_MAX_SIZE else COLOR_ATLAS_MAX_SIZE;
+    if w <= 0 || h <= 0 || GLYPH_PADDING + pw > max_size || GLYPH_PADDING + ph > max_size return 0, 0, false;
     if atlas.shelf_x + pw > atlas.size {
         atlas.shelf_x = GLYPH_PADDING;
         atlas.shelf_y += atlas.shelf_h;
         atlas.shelf_h = 0;
     }
-    if atlas.shelf_y + ph > atlas.size {
-        max_size := ifx atlas.bytes_per_pixel == 1 then ATLAS_MAX_SIZE else COLOR_ATLAS_MAX_SIZE;
+    // Still too wide on a fresh shelf, or too tall: a bigger atlas, or a clear.
+    if atlas.shelf_x + pw > atlas.size || atlas.shelf_y + ph > atlas.size {
         if atlas.size < max_size {
             atlas_grow(atlas);
             gx, gy, grown_ok := atlas_allocate(atlas, w, h);
@@ -569,8 +577,10 @@ atlas_allocate :: (atlas: *Glyph_Atlas, w: s32, h: s32) -> s32, s32, bool {
     return x, y, true;
 }
 
-// Rows of w x h pixels from src (pitch bytes apart) to (x, y).
-atlas_write :: (atlas: *Glyph_Atlas, x: s32, y: s32, w: s32, h: s32, src: *u8, pitch: s32) {
+// Rows of w x h pixels from src (pitch bytes apart) to (x, y). False, and
+// nothing written, when the rectangle isn't inside the atlas.
+atlas_write :: (atlas: *Glyph_Atlas, x: s32, y: s32, w: s32, h: s32, src: *u8, pitch: s32) -> bool {
+    if x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > atlas.size || y + h > atlas.size return false;
     bpp := atlas.bytes_per_pixel;
     for row: 0..h - 1 {
         dst := atlas.pixels.data + ((y + row) * atlas.size + x) * bpp;
@@ -580,6 +590,7 @@ atlas_write :: (atlas: *Glyph_Atlas, x: s32, y: s32, w: s32, h: s32, src: *u8, p
     atlas.dirty_y0 = min(atlas.dirty_y0, y);
     atlas.dirty_x1 = max(atlas.dirty_x1, x + w);
     atlas.dirty_y1 = max(atlas.dirty_y1, y + h);
+    return true;
 }
 
 // Doubling keeps every glyph where it is: the old pixels become the top-left

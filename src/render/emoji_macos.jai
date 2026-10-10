@@ -24,8 +24,8 @@ Emoji_Bitmap :: struct {
 }
 
 // Draws the sequence at size_px. Pixels are cropped to the ink; w == 0 when
-// nothing was drawn.
-emoji_rasterize :: (px: int, sequence: string) -> Emoji_Bitmap, bool {
+// nothing was drawn, or when the line is wider or taller than max_side.
+emoji_rasterize :: (px: int, sequence: string, max_side: s32) -> Emoji_Bitmap, bool {
     result: Emoji_Bitmap;
     font := emoji_font(px);
     if !font return result, false;
@@ -48,6 +48,12 @@ emoji_rasterize :: (px: int, sequence: string) -> Emoji_Bitmap, bool {
 
     // A canvas a little larger than the line, then cropped to what was drawn.
     PAD :: 2;
+    // Checked as floats, before the casts and the canvas, so there are no
+    // megabytes allocated and scanned for a line the atlas can't hold anyway.
+    // The advance stays, so the text after it keeps its place.
+    if !(ceil(result.advance) + PAD * 2 <= xx max_side && ceil(ascent) + ceil(descent) + PAD * 2 <= xx max_side) {
+        return result, true;
+    }
     d := cast(s32) ceil(descent);
     w := cast(s32) ceil(result.advance) + PAD * 2;
     h := cast(s32) ceil(ascent) + d + PAD * 2;

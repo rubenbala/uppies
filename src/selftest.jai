@@ -540,6 +540,16 @@ selftest :: () -> int {
             flag   := measure_text(fonts.regular, 26, "\xF0\x9F\x87\xA6\xF0\x9F\x87\xBA");
             check(house > 0 && abs(family - house) < 0.5 && abs(flag - house) < 0.5 && color_atlas.size > 0,
                   tprint("emoji sequences are one color glyph (house %, family %, flag %)", house, family, flag));
+
+            // A long run of joined emoji draws as separate glyphs, within the atlas.
+            joined: String_Builder;
+            joined.allocator = temp;
+            for 1..2000 append(*joined, "\xF0\x9F\x8F\xA0\xE2\x80\x8D");   // 🏠 ZWJ
+            run := builder_to_string(*joined,, temp);
+            small := measure_text(fonts.regular, 26, run);
+            large := measure_text(fonts.regular, 900, run);
+            check(small > 0 && large > 0 && color_atlas.size <= 2048,
+                  tprint("a long joined emoji run draws within the color atlas (widths %, %; atlas %)", small, large, color_atlas.size));
         }
     } else {
         check(false, "the icon font loads");
