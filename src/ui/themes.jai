@@ -36,8 +36,11 @@ BUILTIN_THEMES :: struct { id: string; text: string; }.[
     .{"uppies-light",     #run embed_theme("uppies-light")},
     .{"nord",             #run embed_theme("nord")},
     .{"dracula",          #run embed_theme("dracula")},
+    .{"gruvbox-dark",     #run embed_theme("gruvbox-dark")},
+    .{"tokyo-night",      #run embed_theme("tokyo-night")},
     .{"solarized-light",  #run embed_theme("solarized-light")},
     .{"catppuccin-latte", #run embed_theme("catppuccin-latte")},
+    .{"rose-pine-dawn",   #run embed_theme("rose-pine-dawn")},
 ];
 
 // Each key a theme file can set, and the Theme member it colors.

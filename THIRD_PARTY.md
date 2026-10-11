@@ -29,11 +29,14 @@ time from `C:\Windows\Fonts`. Fonts you place in `data/fonts/` are your own to l
 
 ## Theme palettes
 
-Four of the built-in themes (`themes/`) take their colors from published palettes, all under the
+Seven of the built-in themes (`themes/`) take their colors from published palettes, all under the
 MIT License: [Nord](https://www.nordtheme.com) (Arctic Ice Studio and Sven Greb),
 [Dracula](https://draculatheme.com) (Zeno Rocha), [Solarized](https://ethanschoonover.com/solarized/)
-(Ethan Schoonover) and [Catppuccin](https://catppuccin.com) (the Catppuccin organization). Only
-the color values are used; no code from these projects is included.
+(Ethan Schoonover), [Catppuccin](https://catppuccin.com) (the Catppuccin organization),
+[Gruvbox](https://github.com/morhetz/gruvbox) (Pavel Pertsev),
+[Tokyo Night](https://github.com/enkia/tokyo-night-vscode-theme) (enkia) and
+[Rosé Pine](https://rosepinetheme.com) (the Rosé Pine organization). Only the color values are
+used; no code from these projects is included.
 
 ## Windows APIs
 

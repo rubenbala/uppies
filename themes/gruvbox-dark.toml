@@ -1,0 +1,53 @@
+# Gruvbox Dark: retro groove, warm earthy browns with bright, punchy accents.
+# Palette by Pavel Pertsev (morhetz), MIT License;
+# https://github.com/morhetz/gruvbox
+
+name = "Gruvbox Dark"
+
+[surface]
+background    = "#1D2021"     # bg0_h
+chrome        = "#232323"
+panel         = "#282828"     # bg0
+panel_header  = "#2E2C2B"
+raised        = "#32302F"     # bg0_s
+hover         = "#3C3836"     # bg1
+active        = "#504945"     # bg2
+border        = "#3C3836"
+border_strong = "#665C54"     # bg3
+divider       = "#34312F"
+grid          = "#3A3735"
+shadow        = "#0E0F0F99"
+scrim         = "#0E0F0F80"
+
+[text]
+primary   = "#EBDBB2"         # fg1
+secondary = "#D5C4A1"         # fg2
+muted     = "#A89984"         # fg4
+faint     = "#7C6F64"         # bg4
+
+[accent]
+base    = "#FABD2F"           # yellow
+hover   = "#FBCB5C"
+pressed = "#D79921"           # neutral yellow
+soft    = "#FABD2F2B"
+wash    = "#FABD2F14"
+text    = "#282828"
+
+[status]
+positive     = "#B8BB26"      # green
+held         = "#FE8019"      # orange
+danger       = "#FB4934"      # red
+danger_hover = "#FC7A6A"
+info         = "#83A598"      # blue
+
+[chart]
+out  = "#83A598"
+in   = "#B8BB26"
+line = "#8EC07C"              # aqua
+
+[category]
+good_life = "#FABD2F"
+personal  = "#FE8019"
+home      = "#D3869B"         # purple
+transport = "#83A598"
+other     = "#928374"         # gray

@@ -1,0 +1,53 @@
+# Tokyo Night: a deep navy night with Tokyo's neon in soft blues and violets.
+# Palette by enkia, MIT License;
+# https://github.com/enkia/tokyo-night-vscode-theme
+
+name = "Tokyo Night"
+
+[surface]
+background    = "#13141C"
+chrome        = "#16161E"     # Background (dark)
+panel         = "#1A1B26"     # Background
+panel_header  = "#1E202E"
+raised        = "#222436"
+hover         = "#292E42"     # Line highlight
+active        = "#2F3549"
+border        = "#24283B"
+border_strong = "#3B4261"
+divider       = "#202231"
+grid          = "#24283B"
+shadow        = "#08080C99"
+scrim         = "#08080C80"
+
+[text]
+primary   = "#C0CAF5"         # Foreground
+secondary = "#A9B1D6"
+muted     = "#737AA2"
+faint     = "#545C7E"
+
+[accent]
+base    = "#7AA2F7"           # Blue
+hover   = "#93B4F9"
+pressed = "#6690E8"
+soft    = "#7AA2F72B"
+wash    = "#7AA2F714"
+text    = "#1A1B26"
+
+[status]
+positive     = "#9ECE6A"      # Green
+held         = "#E0AF68"      # Yellow
+danger       = "#F7768E"      # Red
+danger_hover = "#FA9FB0"
+info         = "#7DCFFF"      # Cyan
+
+[chart]
+out  = "#7AA2F7"
+in   = "#9ECE6A"
+line = "#BB9AF7"              # Magenta
+
+[category]
+good_life = "#E0AF68"
+personal  = "#FF9E64"         # Orange
+home      = "#BB9AF7"
+transport = "#7DCFFF"
+other     = "#565F89"         # Comment

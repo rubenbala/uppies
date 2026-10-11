@@ -1,0 +1,52 @@
+# Rosé Pine Dawn: Rosé Pine's light variant, warm parchment with muted rose,
+# pine and iris. Palette by the Rosé Pine org, MIT License; https://rosepinetheme.com
+
+name = "Rosé Pine Dawn"
+
+[surface]
+background    = "#F2E9E1"     # Overlay
+chrome        = "#FAF4ED"     # Base
+panel         = "#FFFAF3"     # Surface
+panel_header  = "#FBF5EE"
+raised        = "#FFFDF9"
+hover         = "#F4EDE8"     # Highlight Low
+active        = "#DFDAD9"     # Highlight Med
+border        = "#DFDAD9"
+border_strong = "#CECACD"     # Highlight High
+divider       = "#EFE8E2"
+grid          = "#F0E9E3"
+shadow        = "#57527929"
+scrim         = "#57527959"
+
+[text]
+primary   = "#4A4568"         # Text, deepened for contrast on Surface
+secondary = "#625E7E"
+muted     = "#797593"         # Subtle
+faint     = "#9893A5"         # Muted
+
+[accent]
+base    = "#907AA9"           # Iris
+hover   = "#806A99"
+pressed = "#715B89"
+soft    = "#907AA926"
+wash    = "#907AA912"
+text    = "#FFFAF3"
+
+[status]
+positive     = "#286983"      # Pine
+held         = "#EA9D34"      # Gold
+danger       = "#B4637A"      # Love
+danger_hover = "#9A4F65"
+info         = "#56949F"      # Foam
+
+[chart]
+out  = "#D7827E"              # Rose
+in   = "#286983"
+line = "#907AA9"
+
+[category]
+good_life = "#EA9D34"
+personal  = "#D7827E"
+home      = "#907AA9"
+transport = "#56949F"
+other     = "#9893A5"

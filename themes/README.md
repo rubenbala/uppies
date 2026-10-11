@@ -9,8 +9,11 @@ built into Uppies (embedded at build time); pick one in **Settings → Display �
 | `uppies-light.toml`     | Uppies Light     | Light |
 | `nord.toml`             | Nord             | Dark  |
 | `dracula.toml`          | Dracula          | Dark  |
+| `gruvbox-dark.toml`     | Gruvbox Dark     | Dark  |
+| `tokyo-night.toml`      | Tokyo Night      | Dark  |
 | `solarized-light.toml`  | Solarized Light  | Light |
 | `catppuccin-latte.toml` | Catppuccin Latte | Light |
+| `rose-pine-dawn.toml`   | Rosé Pine Dawn   | Light |
 
 ## Your own
 
