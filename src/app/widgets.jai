@@ -456,10 +456,13 @@ draw_field :: (r: Rect, label: string, value: string, mono := false, value_color
 }
 
 // Toolbar strip under the tab bar: a quiet band that holds a page's controls.
-TOOLBAR_HEIGHT :: 52.0;
+TOOLBAR_HEIGHT  :: 52.0;
+TOOLBAR_ROW     :: 32.0;
+TOOLBAR_ROW_GAP :: 8.0;
 
-toolbar_rect :: (r: *Rect) -> Rect {
-    bar := cut_top(r, px(TOOLBAR_HEIGHT));
+// With several rows, the caller takes each with cut_top(*bar, px(TOOLBAR_ROW)) and the gap between.
+toolbar_rect :: (r: *Rect, rows := 1) -> Rect {
+    bar := cut_top(r, px(TOOLBAR_HEIGHT + (rows - 1) * (TOOLBAR_ROW + TOOLBAR_ROW_GAP)));
     return rect_inset_xy(bar, 0, px(10));   // Controls 32 tall, 10 above and below.
 }
 

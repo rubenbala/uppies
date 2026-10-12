@@ -99,30 +99,30 @@ draw_transactions_page :: (r_in: Rect) {
     }
     r := r_in;
 
-    // Toolbar.
-    bar := toolbar_rect(*r);
+    // Summary of what is shown on top, the filters under it. The figures follow the filters, so
+    // the strip's place is taken now and it is drawn once the rows are rebuilt.
+    cut_top(*r, px(10));
+    strip := cut_top(*r, px(METRIC_STRIP_HEIGHT));
+
+    // Filters: search and the pickers on the first row, the toggles and the count on the second.
+    bar := toolbar_rect(*r, 2);
+    row1 := cut_top(*bar, px(TOOLBAR_ROW));
+    cut_top(*bar, px(TOOLBAR_ROW_GAP));
+    row2 := cut_top(*bar, px(TOOLBAR_ROW));
     search_id := "search##txn";
     if st.focus_search {
         st.focus_search = false;
         ui_take_focus(ui_id(search_id), true);
     }
-    x_end := bar.x + bar.w;
-    count_w := px(150);
-    controls := bar;
-    controls.w -= count_w;
-    // Clear keeps its place while filtering; the other controls give up room to it.
-    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
-    clear_w := px(70);
-    clear_reserve := ifx filtered then clear_w + px(6) else 0;
-    controls.w -= clear_reserve;
-    search_w := clamp(controls.w - px(1180), px(170), px(300));
-    search_r := cut_left(*controls, search_w);
-    // In a narrow window the dropdowns give up width before the status filter does.
-    status_options := string.["All", "Held", "Settled"];
-    status_w := ui_segmented_width(status_options);
-    dropdowns_w := px(132 + 150 + 172 + 140);
-    fit := clamp((controls.w - px(8 + 6 * 5) - status_w) / dropdowns_w, 0.7, 1.0);
     changed := false;
+
+    controls := row1;
+    // The search takes what the dropdowns leave; in a narrow window they give up width before it does.
+    dropdowns_w := px(150 + 170 + 190 + 160);
+    gaps_w := px(8 + 6 * 3);
+    search_min := px(240);
+    fit := clamp((controls.w - search_min - gaps_w) / dropdowns_w, 0.6, 1.0);
+    search_r := cut_left(*controls, max(controls.w - dropdowns_w * fit - gaps_w, search_min));
     c := ui_text_input(search_id, search_r, *st.search, "Search description, notes, tags, amounts…", .SEARCH);
     if c changed = true;
     cut_left(*controls, px(8));
@@ -130,59 +130,53 @@ draw_transactions_page :: (r_in: Rect) {
     for PERIOD_LABELS period_items[it_index].label = it;
     if st.has_custom period_items[CUSTOM_PERIOD].label = custom_period_label(st.custom);
     if st.period >= period_items.count st.period = 0;
-    if ui_dropdown("period##txn", cut_left(*controls, px(132) * fit), period_items, *st.period, popup_width = px(220)) changed = true;
+    if ui_dropdown("period##txn", cut_left(*controls, px(150) * fit), period_items, *st.period, popup_width = px(220)) changed = true;
     cut_left(*controls, px(6));
     acct_items, acct_map := account_filter_items();
-    if ui_dropdown("account##txn", cut_left(*controls, px(150) * fit), acct_items, *st.account) changed = true;
+    if ui_dropdown("account##txn", cut_left(*controls, px(170) * fit), acct_items, *st.account) changed = true;
     cut_left(*controls, px(6));
     cat_items, cat_map := category_filter_items();
     st.category = clamp(st.category, 0, cat_items.count - 1);
-    if ui_dropdown("category##txn", cut_left(*controls, px(172) * fit), cat_items, *st.category, popup_width = px(260)) changed = true;
+    if ui_dropdown("category##txn", cut_left(*controls, px(190) * fit), cat_items, *st.category, popup_width = px(260)) changed = true;
     cut_left(*controls, px(6));
     tag_items, tag_map := tag_filter_items();
     tag_index := index_of_value(tag_map, st.tag);
     if tag_map[tag_index] != st.tag { st.tag = -1; st.rows_key = 0; }   // The tag is gone.
-    if ui_dropdown("tag##txn", cut_left(*controls, px(140) * fit), tag_items, *tag_index, popup_width = px(240)) {
+    if ui_dropdown("tag##txn", cut_left(*controls, px(160) * fit), tag_items, *tag_index, popup_width = px(240)) {
         st.tag = tag_map[tag_index];
         changed = true;
     }
-    cut_left(*controls, px(6));
-    if ui_segmented("status##txn", cut_left(*controls, status_w), status_options, *st.status) changed = true;
+
+    controls = row2;
+    count_w := px(150);
+    count_r := cut_right(*controls, count_w);
+    status_options := string.["All", "Held", "Settled"];
+    if ui_segmented("status##txn", cut_left(*controls, ui_segmented_width(status_options)), status_options, *st.status) changed = true;
     cut_left(*controls, px(6));
     direction_options := string.["In & out", "In", "Out"];
-    dw := ui_segmented_width(direction_options);
-    if controls.w >= dw {
-        if ui_segmented("direction##txn", cut_left(*controls, dw), direction_options, *st.direction) changed = true;
-        cut_left(*controls, px(6));
-    }
+    if ui_segmented("direction##txn", cut_left(*controls, ui_segmented_width(direction_options)), direction_options, *st.direction) changed = true;
+    cut_left(*controls, px(10));
     transfers_label := "Hide transfers##txn";
     transfers_w := px(22 + 8) + measure_text(fonts.regular, px(theme.font_size_body), display_text(transfers_label));
-    if controls.w >= transfers_w || st.hide_transfers {
-        cut_left(*controls, px(4));
-        if ui_checkbox(transfers_label, cut_left(*controls, transfers_w), *st.hide_transfers) changed = true;
-        cut_left(*controls, px(6));
-    }
-    controls.w = max(controls.w, 0) + clear_reserve;
-    filtered = st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
-    if filtered && controls.w >= clear_w {
-        if ui_button("Clear##txn-filters", cut_left(*controls, clear_w), .GHOST, .CLOSE) {
+    if ui_checkbox(transfers_label, cut_left(*controls, transfers_w), *st.hide_transfers) changed = true;
+    cut_left(*controls, px(10));
+    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
+    if filtered {
+        if ui_button("Clear##txn-filters", cut_left(*controls, px(70)), .GHOST, .CLOSE) {
             st.search.count = 0;
             st.period = 0; st.account = 0; st.category = 0; st.status = 0; st.direction = 0; st.tag = -1;
             st.hide_transfers = false;
             changed = true;
         }
+        filtered = st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
     }
     if changed st.table.scroll.target = 0;
 
     rebuild_rows(st, acct_map, cat_map);
 
-    count_r := rect(x_end - count_w, bar.y, count_w, bar.h);
     count_text := ifx filtered then tprint("% of %", format_grouped(st.matched), format_grouped(store.transactions.count)) else tprint("% transactions", format_grouped(store.transactions.count));
     draw_text_in_rect(fonts.regular, px(theme.font_size_label), count_r, count_text, theme.text_muted, .RIGHT, .{tabular = true});
 
-    // Summary of what is shown.
-    strip := cut_top(*r, px(METRIC_STRIP_HEIGHT));
-    cut_top(*r, px(8));
     loading := sync.phase == .LOADING && !store.transactions.count;
     t := st.totals;
     net := t.money_in - t.money_out;
