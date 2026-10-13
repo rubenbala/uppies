@@ -312,21 +312,8 @@ draw_balance_chart :: (label: string, r: Rect, balances: [] s64, first_day: s64,
     }
 
     dx := plot.w / (n - 1);
-    base := y_of(cast(float) max(axis_lo, 0.0), plot, axis_lo, scale);
-    wash_top := color_with_alpha(color, 0.16);
-    wash_bottom := color_with_alpha(color, 0.02);
-    for i: 0..n - 2 {
-        x0 := plot.x + i * dx;
-        y0 := y_of(values[i], plot, axis_lo, scale);
-        y1 := y_of(values[i + 1], plot, axis_lo, scale);
-        draw_area(x0, x0 + dx, y0, y1, base, wash_top, wash_bottom);
-    }
-    for i: 0..n - 2 {
-        x0 := plot.x + i * dx;
-        draw_line(x0, y_of(values[i], plot, axis_lo, scale), x0 + dx, y_of(values[i + 1], plot, axis_lo, scale), px(2), color);
-    }
-
-    // X labels: months (or days for short ranges).
+    // X labels: months (or days for short ranges). Their gridlines go
+    // down before the wash and the line so the data sits on top.
     last_label_x := -1000.0;
     for i: 0..n - 1 {
         day := first_day + i;
@@ -339,6 +326,20 @@ draw_balance_chart :: (label: string, r: Rect, balances: [] s64, first_day: s64,
         text := ifx n > 120 then (ifx d.month == 1 then tprint("% %", MONTH_SHORT[0], d.year) else MONTH_SHORT[d.month - 1]) else tprint("% %", d.day, MONTH_SHORT[d.month - 1]);
         ui_vdivider(x, plot.y, plot.h, theme.grid);
         draw_text_in_rect(fonts.regular, px(theme.font_size_small), rect(x - px(40), labels.y, px(80), labels.h), text, theme.text_muted, .CENTER);
+    }
+
+    base := y_of(cast(float) max(axis_lo, 0.0), plot, axis_lo, scale);
+    wash_top := color_with_alpha(color, 0.16);
+    wash_bottom := color_with_alpha(color, 0.02);
+    for i: 0..n - 2 {
+        x0 := plot.x + i * dx;
+        y0 := y_of(values[i], plot, axis_lo, scale);
+        y1 := y_of(values[i + 1], plot, axis_lo, scale);
+        draw_area(x0, x0 + dx, y0, y1, base, wash_top, wash_bottom);
+    }
+    for i: 0..n - 2 {
+        x0 := plot.x + i * dx;
+        draw_line(x0, y_of(values[i], plot, axis_lo, scale), x0 + dx, y_of(values[i + 1], plot, axis_lo, scale), px(2), color);
     }
 
     // End point and crosshair.
