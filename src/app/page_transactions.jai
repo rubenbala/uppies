@@ -214,14 +214,17 @@ draw_transactions_page :: (r_in: Rect) {
     t_rect.h -= hairline();
     tbl: Data_Table;
     // With several chosen, each marks its own row (below) instead of the one highlight.
+    was_selected := st.table.selected;
     table_begin(*tbl, "txn-table", t_rect, TXN_COLUMNS, *st.table, st.rows.count, keyboard = true, highlight = !multi);
     if tbl.sort_changed st.rows_key = 0;
 
     // Moving with the keys goes back to one transaction.
     if tbl.selection_changed && multi clear_picked(st);
-    // Headers aren't selectable: step over them.
+    // Headers aren't selectable: step over them, the way the selection was moving
+    // (down when there's nothing above, as for the first day's header).
     if tbl.selection_changed && st.table.selected >= 0 && st.table.selected < st.rows.count && st.rows[st.table.selected].header {
-        if st.table.selected + 1 < st.rows.count st.table.selected += 1;
+        if st.table.selected < was_selected && st.table.selected > 0 st.table.selected -= 1;
+        else if st.table.selected + 1 < st.rows.count st.table.selected += 1;
     }
     if st.table.selected >= 0 && st.table.selected < st.rows.count {
         row := st.rows[st.table.selected];
