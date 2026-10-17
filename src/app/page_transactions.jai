@@ -29,6 +29,8 @@ Transactions_State :: struct {
     totals:    Flow_Totals;
     held_count: int;
     held_total: s64;
+    out_count:  int;   // Payments out counted in the totals.
+    left_out_counted: int;   // Counted by a search though their account is left out of totals.
     matched:   int;
 
     selected_id:  string;
@@ -189,8 +191,7 @@ draw_transactions_page :: (r_in: Rect) {
     loading := sync.phase == .LOADING && !store.transactions.count;
     t := st.totals;
     net := t.money_in - t.money_out;
-    outgoing := 0;
-    for st.rows if !it.header && store.transactions[it.txn].amount < 0 outgoing += 1;
+    outgoing := st.out_count;
     average_out := ifx outgoing then t.money_out / outgoing else 0;
     largest := ifx t.largest_out_index >= 0 then store.transactions[t.largest_out_index].description else "";
     metrics := Metric.[
@@ -218,7 +219,17 @@ draw_transactions_page :: (r_in: Rect) {
     }
 
     body := appear_begin(table_area, 0);
-    content, header := panel_begin(body, "Transactions", tprint("sorted by %", to_lower_temp(TXN_COLUMNS[max(st.table.sort_column, 0)].title)));
+    // A search sums accounts left out of totals too; say so at the right of the header.
+    left_out := "";
+    if st.left_out_counted left_out = "Includes results from excluded accounts";
+    left_out_w := ifx left_out.count then chip_width(left_out, .INFO) else 0.0;
+    content, header := panel_begin(body, "Transactions", tprint("sorted by %", to_lower_temp(TXN_COLUMNS[max(st.table.sort_column, 0)].title)), controls = left_out_w / ui.scale);
+    if left_out.count {
+        chip := rect(header.x + header.w - left_out_w, header.y + header.h * 0.5 - px(9), left_out_w, px(18));
+        draw_chip(chip.x, chip.y + chip.h * 0.5, left_out, theme.info, .INFO);
+        tip := ui_id("left-out##txn");
+        ui_tooltip(tip, ui_interact(tip, chip).hovered, "The search totals count every account,\nincluding those left out of totals on Accounts.");
+    }
     t_rect := rect_inset_xy(content, 0, 0);
     t_rect.h -= hairline();
     tbl: Data_Table;
@@ -714,6 +725,9 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
     st.totals = .{};
     st.held_count = 0;
     st.held_total = 0;
+    st.out_count = 0;
+    st.left_out_counted = 0;
+    searching := search.count > 0 || st.merchants.count > 0;
     for * txn, i: store.transactions {
         if has_period && (txn.day < period.first || txn.day > period.last) continue;
         if account >= 0 && txn.account != account continue;
@@ -727,11 +741,13 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         if st.merchants.count && !merchant_pinned(st, txn.description) continue;
         if !txn_matches(txn, search) continue;
         array_add(*indices, cast(s32) i);
-        if counts_for(txn, account) {
+        if counts_in_summary(txn, account, searching) {
             st.totals.count += 1;
+            if account < 0 && account_excluded(txn.account) st.left_out_counted += 1;
             if txn.amount > 0 st.totals.money_in += txn.amount;
             else {
                 st.totals.money_out -= txn.amount;
+                if txn.amount < 0 st.out_count += 1;
                 if -txn.amount > st.totals.largest_out { st.totals.largest_out = -txn.amount; st.totals.largest_out_index = cast(s32) i; }
             }
         }
@@ -781,7 +797,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
             }
             h := *st.rows[header_index];
             h.count += 1;
-            if counts_for(txn, account) {
+            if counts_in_summary(txn, account, searching) {
                 if txn.amount > 0 h.money_in += txn.amount; else h.money_out -= txn.amount;
             }
             array_add(*st.rows, .{txn = it, day = txn.day});
@@ -819,6 +835,13 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
             ui_scroll_to(*st.table.scroll, st.table.selected * row_h, row_h, max(st.table.scroll.view, row_h * 4));
         }
     }
+}
+
+// Whether a listed transaction adds to the totals. Accounts left out of the totals stay out of
+// the overall figures, but a search (text or merchant pills) sums everything it finds.
+counts_in_summary :: (t: *Transaction, account: int, searching: bool) -> bool {
+    if account < 0 && searching return counts_as_flow(t);
+    return counts_for(t, account);
 }
 
 hash_key_string :: (s: string) -> u64 {

@@ -194,7 +194,11 @@ draw_inspector :: (r: Rect, st: *Inspector_State, index: s32) -> bool {
             if io.clicked && !current show_transactions(select_id = other.id);
             y += px(22);
         }
+        // Everything from this merchant, as a merchant pill in the search, this one still open.
         y += px(8);
+        label := "View all from this merchant##inspector-merchant";
+        if ui_button(label, rect(x, y, ui_button_width(label, .FILTER), px(28)), .SECONDARY, .FILTER) show_transactions(merchant = t.description, select_id = t.id);
+        y += px(36);
     }
 
     y += px(10);
