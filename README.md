@@ -27,8 +27,8 @@ straight onto your saved data, and uses no CPU at all while you're just looking 
 over the last 30 days, money in and out, this month's spending and your latest activity. It also
 points out anything that needs a look, like held payments or purchases without a category.
 
-**Find any transaction.** Search, filter by account, category, tag or date (financial years
-included), and sort however you like. Click a transaction to change its category or tags, or save it as a PDF.
+**Find any transaction.** Search, pin one or more merchants as you type, filter by account,
+category, tag or date (financial years included), and sort however you like. Click a transaction to change its category or tags, or save it as a PDF.
 Ctrl+click a few and you can recategorise or tag them all in one go. Made a mistake? Ctrl+Z.
 
 **Understand your spending.** See spending by category and how it compares with previous months,

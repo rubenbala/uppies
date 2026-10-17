@@ -11,7 +11,9 @@ Text_Input_Flags :: enum_flags u8 {
     CLEARABLE;   // A clear button when not empty.
 }
 
-ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "", flags: Text_Input_Flags = 0, max_length := -1) -> changed: bool, submitted: bool {
+// `lead` keeps that much room before the text for the caller to draw in (search pills); the
+// clear button then shows even with no text, and `cleared` says it was clicked.
+ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "", flags: Text_Input_Flags = 0, max_length := -1, lead := 0.0) -> changed: bool, submitted: bool, cleared: bool {
     id := ui_id(label);
     w := ui_widget(id);
     focused := ui_focusable(id);
@@ -24,8 +26,9 @@ ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "
     b := snap(r);
     inner := rect_inset_xy(b, px(9), 0);
     if flags & .SEARCH cut_left(*inner, px(18));
+    if lead > 0 cut_left(*inner, lead);
     clear_r: Rect;
-    has_clear := (flags & (.CLEARABLE | .SEARCH)) && buffer.count > 0;
+    has_clear := (flags & (.CLEARABLE | .SEARCH)) && (buffer.count > 0 || lead > 0);
     if has_clear clear_r = cut_right(*inner, px(18));
 
     changed, submitted := false, false;
@@ -235,7 +238,7 @@ ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "
     shown := display_of(text, flags);
     push_clip(rect(inner.x, b.y, inner.w, b.h));
     baseline := text_baseline_in(font, size, inner);
-    if !text.count {
+    if !text.count && lead <= 0 {
         if placeholder.count draw_text_fit(fonts.regular, size, inner, placeholder, theme.text_faint);
     }
     scroll := 0.0;
@@ -265,7 +268,7 @@ ui_text_input :: (label: string, r: Rect, buffer: *Text_Buffer, placeholder := "
         draw_text(font, size, inner.x, baseline, fit_text(font, size, shown, inner.w), theme.text);
     }
     pop_clip();
-    return changed, submitted;
+    return changed, submitted, clear_clicked;
 }
 
 #scope_file

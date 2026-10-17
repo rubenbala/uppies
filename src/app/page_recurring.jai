@@ -424,5 +424,5 @@ draw_series_detail :: (r: Rect, st: *Recurring_Page_State) {
 // Its charges in Transactions, the latest open in the inspector.
 open_in_transactions :: (s: *Recurring_Series) {
     latest := *store.transactions[recurring.members[s.first + s.count - 1]];
-    show_transactions(search = s.name, account = s.account, select_id = latest.id);
+    show_transactions(merchant = s.name, account = s.account, select_id = latest.id);
 }

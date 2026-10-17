@@ -404,6 +404,27 @@ chip_width :: (text: string, icon := Icon.NONE) -> float {
     return measure_text(fonts.semibold, px(theme.font_size_small), text) + iw + px(12);
 }
 
+// A filter held in a search field: its name in an accent tint, with an × at the right end that
+// the caller makes clickable (pill_close_rect).
+PILL_HEIGHT :: 22.0;
+
+pill_width :: (text: string) -> float {
+    return min(measure_text(fonts.regular, px(theme.font_size_label), text), px(160)) + px(8 + 18 + 2);   // 2: so snapping never tips the label into an ellipsis.
+}
+
+pill_close_rect :: (r: Rect) -> Rect {
+    return rect(r.x + r.w - px(18), r.y, px(18), r.h);
+}
+
+draw_pill :: (r: Rect, text: string, close_hover: float) {
+    b := snap(r);
+    draw_rect_outline(b, color_with_alpha(theme.accent, 0.14), color_with_alpha(theme.accent, 0.35), hairline(), px(theme.radius_control));
+    draw_text_fit(fonts.regular, px(theme.font_size_label), rect(b.x + px(8), b.y, b.w - px(8 + 18), b.h), text, theme.text);
+    close := pill_close_rect(b);
+    if close_hover > 0 draw_rect(snap(rect_inset_xy(close, px(2), px(3))), color_with_alpha(theme.accent, 0.22 * close_hover), px(2));
+    draw_icon_in(.CLOSE, close, px(8), color_lerp(theme.text_muted, theme.text, close_hover));
+}
+
 // A name with a muted chip just after it; the name gives way when there
 // isn't room for both.
 draw_name_with_chip :: (r: Rect, size: float, name: string, color: Color, chip: string) {

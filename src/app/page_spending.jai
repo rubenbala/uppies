@@ -258,5 +258,5 @@ draw_merchants :: (r: Rect, st: *Spending_State, period: Period, account: int) {
         if table_column_shown(*tbl, 5) draw_text_in_rect(fonts.regular, px(theme.font_size_label), table_cell(*tbl, row, 5), format_date_short(m.last_day, app.today), theme.text_muted, .RIGHT, .{tabular = true});
     }
     table_end(*tbl);
-    if tbl.activated >= 0 show_transactions(search = list.rows[tbl.activated].name, custom = period);
+    if tbl.activated >= 0 show_transactions(merchant = list.rows[tbl.activated].name, custom = period);
 }

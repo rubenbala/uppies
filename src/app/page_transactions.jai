@@ -1,8 +1,10 @@
 // Transactions: find, compare and fix individual transactions.
 //
 // Toolbar filters (search, period, account, category, tag, status, direction,
-// own transfers) narrow the list; the strip under it sums what is shown. Sorted by date the
-// list is grouped by day, each day's header carrying its money in and out.
+// own transfers) narrow the list. The search also offers matching merchants as you type;
+// picking one pins it as a pill in the field (several pills: any of them). The strip under
+// it sums what is shown. Sorted by date the list is grouped by day, each day's header
+// carrying its money in and out.
 // Selecting a row opens the inspector on the right, where the category and
 // tags can be changed. Ctrl+click (or Shift+click for a run of rows) chooses
 // several; the inspector then sums them up, and moves them to one category
@@ -10,6 +12,7 @@
 
 Transactions_State :: struct {
     search:    Text_Buffer;
+    merchants: [..] string;   // Merchant pills in the search (owned copies); a transaction matches any one.
     period:    int;
     account:   int;
     category:  int;
@@ -31,6 +34,9 @@ Transactions_State :: struct {
     selected_id:  string;
     picked:       [..] string;   // Ids of the transactions chosen together: none, or two or more.
     focus_search: bool;
+    suggest:      [..] s32;   // Merchants offered under the search, as merchant_index rows.
+    suggest_key:  u64;
+    suggest_dismissed: bool;  // Escape closed the list; it comes back with the next edit.
     inspector:    Inspector_State;
     inspector_t:  float;
     initialized:  bool;
@@ -64,12 +70,16 @@ TXN_COLUMNS :: Column.[
     .{"Amount",      116, .RIGHT, true, 0},
 ];
 
+TXN_SEARCH :: "search##txn";
+
 // Shows the transactions page with filters that pick out one set.
 CUSTOM_PERIOD :: PERIOD_LABELS.count;
 
-show_transactions :: (category := -1, period := 0, status := 0, tag: s32 = -1, select_id := "", account := -1, custom := Period.{}, search := "") {
+show_transactions :: (category := -1, period := 0, status := 0, tag: s32 = -1, select_id := "", account := -1, custom := Period.{}, search := "", merchant := "") {
     st := *app.txn;
     buffer_set(*st.search, search);
+    clear_merchants(st);
+    if merchant.count pin_merchant(st, merchant);
     items, map := category_filter_items();
     st.category = ifx category == -1 then 0 else index_of_value(map, cast(s32) category);
     st.period = period;
@@ -109,10 +119,9 @@ draw_transactions_page :: (r_in: Rect) {
     row1 := cut_top(*bar, px(TOOLBAR_ROW));
     cut_top(*bar, px(TOOLBAR_ROW_GAP));
     row2 := cut_top(*bar, px(TOOLBAR_ROW));
-    search_id := "search##txn";
     if st.focus_search {
         st.focus_search = false;
-        ui_take_focus(ui_id(search_id), true);
+        ui_take_focus(ui_id(TXN_SEARCH), true);
     }
     changed := false;
 
@@ -123,8 +132,7 @@ draw_transactions_page :: (r_in: Rect) {
     search_min := px(240);
     fit := clamp((controls.w - search_min - gaps_w) / dropdowns_w, 0.6, 1.0);
     search_r := cut_left(*controls, max(controls.w - dropdowns_w * fit - gaps_w, search_min));
-    c := ui_text_input(search_id, search_r, *st.search, "Search description, notes, tags, amounts…", .SEARCH);
-    if c changed = true;
+    if draw_search(st, search_r) changed = true;
     cut_left(*controls, px(8));
     period_items := NewArray(PERIOD_LABELS.count + ifx st.has_custom then 1 else 0, Dropdown_Item,, temp);
     for PERIOD_LABELS period_items[it_index].label = it;
@@ -160,15 +168,16 @@ draw_transactions_page :: (r_in: Rect) {
     transfers_w := px(22 + 8) + measure_text(fonts.regular, px(theme.font_size_body), display_text(transfers_label));
     if ui_checkbox(transfers_label, cut_left(*controls, transfers_w), *st.hide_transfers) changed = true;
     cut_left(*controls, px(10));
-    filtered := st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
+    filtered := st.search.count > 0 || st.merchants.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
     if filtered {
         if ui_button("Clear##txn-filters", cut_left(*controls, px(70)), .GHOST, .CLOSE) {
             st.search.count = 0;
+            clear_merchants(st);
             st.period = 0; st.account = 0; st.category = 0; st.status = 0; st.direction = 0; st.tag = -1;
             st.hide_transfers = false;
             changed = true;
         }
-        filtered = st.search.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
+        filtered = st.search.count > 0 || st.merchants.count > 0 || st.period != 0 || st.account != 0 || st.category != 0 || st.status != 0 || st.direction != 0 || st.tag != -1 || st.hide_transfers;
     }
     if changed st.table.scroll.target = 0;
 
@@ -287,6 +296,17 @@ draw_transactions_page :: (r_in: Rect) {
     }
 }
 
+pin_merchant :: (st: *Transactions_State, name: string) {
+    if !merchant_pinned(st, name) array_add(*st.merchants, copy_string(name));
+    st.search.count = 0;
+    if ui.popup == search_list_id() ui_close_popup();
+}
+
+clear_merchants :: (st: *Transactions_State) {
+    for st.merchants free(it);
+    st.merchants.count = 0;
+}
+
 clear_picked :: (st: *Transactions_State) {
     for st.picked free(it);
     st.picked.count = 0;
@@ -294,6 +314,275 @@ clear_picked :: (st: *Transactions_State) {
 }
 
 #scope_file
+
+// The search field: free text that filters as you type, after it any merchant pills. While
+// typing, the merchants whose names match are offered underneath; Down/Up and Enter, or a
+// click, pin one. Backspace in the empty field takes the last pill off again.
+draw_search :: (st: *Transactions_State, r: Rect) -> changed: bool {
+    id := ui_id(TXN_SEARCH);
+    list_id := search_list_id();
+    changed := false;
+
+    // The field would take these keys itself, so the list and the pills see them first.
+    if ui.focus == id {
+        if ui.popup == list_id {
+            hl := ui.popup_highlight;
+            if key_pressed(.DOWN) { hl = min(hl + 1, st.suggest.count - 1); input.key_pressed[Key.DOWN] = false; }
+            if key_pressed(.UP)   { hl = max(hl - 1, -1); input.key_pressed[Key.UP] = false; }
+            ui.popup_highlight = hl;
+            if key_pressed(.ENTER) && hl >= 0 && hl < st.suggest.count {
+                input.key_pressed[Key.ENTER] = false;
+                pin_merchant(st, merchant_index.names[st.suggest[hl]]);
+                changed = true;
+            }
+            if key_pressed(.ESCAPE) {
+                input.key_pressed[Key.ESCAPE] = false;
+                ui_close_popup();
+                st.suggest_dismissed = true;
+            }
+        }
+        if !st.search.count && st.merchants.count && key_pressed(.BACKSPACE) {
+            input.key_pressed[Key.BACKSPACE] = false;
+            unpin_merchant(st, st.merchants.count - 1);
+            changed = true;
+        }
+    }
+
+    // A pill's x sits inside the field, so it must interact before the field does.
+    pills := layout_pills(st, r);
+    removed := -1;
+    over_close := false;
+    for p, k: pills.rects {
+        cid := pill_id(id, pills.first + k);
+        cw := ui_widget(cid);
+        io := ui_interact(cid, pill_close_rect(p));
+        ui_animate(*cw.hover, ifx io.hovered then 1.0 else 0.0, 22);
+        if io.hovered over_close = true;
+        if io.pressed {
+            if ui.focus != id { ui_take_focus(id); ui_widget(id).t = 1; }   // Gained by mouse: don't select all.
+            ui.focus_claimed = true;
+        }
+        if io.clicked removed = pills.first + k;
+    }
+
+    edited, _, cleared := ui_text_input(TXN_SEARCH, r, *st.search, "Search merchants, descriptions, notes, tags, amounts…", .SEARCH, lead = pills.lead);
+    if edited { changed = true; st.suggest_dismissed = false; }
+    if cleared && st.merchants.count { clear_merchants(st); changed = true; }
+    if removed >= 0 { unpin_merchant(st, removed); changed = true; }
+    if over_close ui.cursor = .HAND;
+
+    if removed >= 0 || cleared {
+        pills = layout_pills(st, r);
+        ui.animating = true;   // The text moves over next frame.
+    }
+    if pills.first > 0 draw_chip(pills.more.x, pills.more.y + pills.more.h * 0.5, tprint("+%", pills.first), theme.accent);
+    for p, k: pills.rects draw_pill(p, st.merchants[pills.first + k], ui_widget(pill_id(id, pills.first + k)).hover);
+
+    // The suggestions follow the text; the list shows while the field has the keyboard.
+    update_merchant_index();
+    update_suggestions(st, to_lower_temp(trim(buffer_string(*st.search))));
+    want := ui.focus == id && st.suggest.count > 0 && !st.suggest_dismissed && (ui.popup == 0 || ui.popup == list_id);
+    if want && ui.popup != list_id {
+        // A click in the field closes the list on its way through (the field is its anchor):
+        // put it straight back rather than opening it again.
+        again := ui.popup == 0 && ui.popup_opened == ui.frame;
+        ui_open_popup(list_id, r);
+        if again ui.popup_t = 1;
+    } else if !want && ui.popup == list_id {
+        ui_close_popup();
+    }
+    if ui.popup == list_id && draw_suggestions(st, list_id, r) {
+        changed = true;
+        ui.animating = true;
+    }
+    return changed;
+}
+
+search_list_id :: () -> UI_Id { return ui_id_combine(ui_id(TXN_SEARCH), 0x5EC7); }
+
+pill_id :: (search: UI_Id, index: int) -> UI_Id { return ui_id_combine(search, cast(u64) (0x9111 + index)); }
+
+Pill_Layout :: struct {
+    rects: [] Rect;   // The pills shown: the newest, as many as fit.
+    first: int;       // Index of the first one shown; those before it fold into a "+N" chip.
+    more:  Rect;
+    lead:  float;     // Room they take before the text.
+}
+
+// The pills take at most about half the field; the oldest give way first.
+layout_pills :: (st: *Transactions_State, field: Rect) -> Pill_Layout {
+    out: Pill_Layout;
+    n := st.merchants.count;
+    if !n return out;
+    gap := px(4);
+    room := field.w * 0.55;
+    used := 0.0;
+    first := n;
+    while first > 0 {
+        w := min(pill_width(st.merchants[first - 1]), room) + gap;
+        more := ifx first > 1 then chip_width(tprint("+%", first - 1)) + gap else 0.0;
+        if first < n && used + w + more > room break;   // The newest always shows.
+        used += w;
+        first -= 1;
+    }
+    out.first = first;
+
+    b := snap(field);
+    x0 := b.x + px(9 + 18);   // After the field's padding and magnifier.
+    x := x0;
+    cy := b.y + b.h * 0.5;
+    if first > 0 {
+        out.more = rect(x, cy - px(9), chip_width(tprint("+%", first)), px(18));
+        x += out.more.w + gap;
+    }
+    h := px(PILL_HEIGHT);
+    out.rects = NewArray(n - first, Rect,, temp);
+    for i: first..n - 1 {
+        w := min(pill_width(st.merchants[i]), room);
+        out.rects[i - first] = rect(x, cy - h * 0.5, w, h);
+        x += w + gap;
+    }
+    out.lead = x - x0 + px(2);
+    return out;
+}
+
+// Returns true when a merchant was picked.
+draw_suggestions :: (st: *Transactions_State, id: UI_Id, anchor: Rect) -> bool {
+    row_h := px(28);
+    head_h := px(26);
+    visible, area := ui_popup_begin(id, clamp(anchor.w, px(280), px(440)), head_h + st.suggest.count * row_h + px(6));
+    if !visible return false;
+    draw_caps(rect(area.x + px(12), area.y + px(2), area.w - px(24), head_h), "Merchants", theme.text_muted);
+    picked := -1;
+    for s, i: st.suggest {
+        row := rect(area.x, area.y + px(2) + head_h + i * row_h, area.w, row_h);
+        rid := ui_id_combine(id, cast(u64) i + 1000);
+        rw := ui_widget(rid);
+        rio := ui_interact(rid, row);
+        if rio.hovered { ui.cursor = .HAND; if ui.mouse_moved || rio.pressed ui.popup_highlight = i; }
+        if rio.pressed ui.focus_claimed = true;   // The field keeps the keyboard.
+        ui_animate(*rw.hover, ifx ui.popup_highlight == i then 1.0 else 0.0, 30);
+        if rw.hover > 0 draw_rect(snap(rect_inset_xy(row, px(4), px(1))), color_with_alpha(theme.hover, rw.hover), px(2));
+        t := rect_inset_xy(row, px(12), 0);
+        dw := draw_text_in_rect(fonts.regular, px(theme.font_size_label), t, format_count(merchant_index.counts[s], "transaction", "transactions"), theme.text_muted, .RIGHT, .{tabular = true});
+        t.w -= dw + px(10);
+        draw_text_fit(fonts.regular, px(theme.font_size_body), t, merchant_index.names[s], theme.text);
+        if rio.clicked picked = s;
+    }
+    ui_popup_end();
+    if picked < 0 return false;
+    pin_merchant(st, merchant_index.names[picked]);
+    ui.popup_drawn = true;   // Closed on purpose; don't report it as orphaned.
+    return true;
+}
+
+unpin_merchant :: (st: *Transactions_State, index: int) {
+    free(st.merchants[index]);
+    array_ordered_remove_by_index(*st.merchants, index);
+}
+
+merchant_pinned :: (st: *Transactions_State, name: string) -> bool {
+    for st.merchants if it == name return true;
+    return false;
+}
+
+merchant_pills_hash :: (st: *Transactions_State) -> u64 {
+    h: u64 = cast(u64) st.merchants.count;
+    for st.merchants h = hash_key(h, hash_key_string(it));
+    return h;
+}
+
+// Every merchant (a transaction's description) with how many transactions it has.
+Merchant_Index :: struct {
+    key:    u64;
+    names:  [..] string;   // Point into the transactions' storage.
+    counts: [..] s32;
+}
+
+merchant_index: Merchant_Index;
+
+update_merchant_index :: () {
+    m := *merchant_index;
+    key := hash_key(store.version, 0x3E7C);
+    if m.key == key return;
+    m.key = key;
+    m.names.count = 0;
+    m.counts.count = 0;
+    lookup: Table(string, int);
+    lookup.allocator = temp;
+    for * t: store.transactions {
+        if !t.description.count continue;
+        found, index := table_find(*lookup, t.description);
+        if !found {
+            index = m.names.count;
+            table_set(*lookup, t.description, index);
+            array_add(*m.names, t.description);
+            array_add(*m.counts, 0);
+        }
+        m.counts[index] += 1;
+    }
+}
+
+MAX_SUGGESTIONS :: 8;
+
+Suggestion :: struct {
+    index: s32;
+    rank:  s32;
+    count: s32;
+    name:  string;
+}
+
+// Merchants whose names hold the (lower case) text, not already pinned: the name itself first,
+// then names starting with it, then those with a word starting with it, then the rest; busiest
+// first in each. Text that looks like an amount only offers names that start with it.
+update_suggestions :: (st: *Transactions_State, needle: string) {
+    key := hash_key(merchant_index.key, hash_key_string(needle), merchant_pills_hash(st));
+    if key == st.suggest_key return;
+    st.suggest_key = key;
+    st.suggest.count = 0;
+    if ui.popup == search_list_id() ui.popup_highlight = -1;   // A new list starts with nothing picked.
+    if !needle.count return;
+
+    amount := true;
+    for 0..needle.count - 1 {
+        c := needle[it];
+        if !(c >= #char "0" && c <= #char "9") && c != #char "." && c != #char "," && c != #char "$" { amount = false; break; }
+    }
+    found: [..] Suggestion;
+    found.allocator = temp;
+    for name, i: merchant_index.names {
+        rank := match_rank(name, needle);
+        if rank < 0 || (amount && rank > 1) || merchant_pinned(st, name) continue;
+        array_add(*found, .{cast(s32) i, cast(s32) rank, merchant_index.counts[i], name});
+    }
+    quick_sort(found, (a: Suggestion, b: Suggestion) -> int {
+        if a.rank != b.rank return a.rank - b.rank;
+        if a.count != b.count return b.count - a.count;
+        return compare_nocase(a.name, b.name);
+    });
+    for 0..min(found.count, MAX_SUGGESTIONS) - 1 array_add(*st.suggest, found[it].index);
+}
+
+// Where the (lower case) needle falls in hay: 0 the whole of it, 1 at the start, 2 at the start
+// of a later word, 3 inside a word, -1 not at all.
+match_rank :: (hay: string, needle: string) -> int {
+    if hay.count < needle.count return -1;
+    best := -1;
+    for i: 0..hay.count - needle.count {
+        match := true;
+        for j: 0..needle.count - 1 {
+            h := hay[i + j];
+            if h >= #char "A" && h <= #char "Z" h += 32;
+            if h != needle[j] { match = false; break; }
+        }
+        if !match continue;
+        if i == 0 return ifx hay.count == needle.count then 0 else 1;
+        p := hay[i - 1];
+        if !((p >= #char "a" && p <= #char "z") || (p >= #char "A" && p <= #char "Z") || (p >= #char "0" && p <= #char "9")) return 2;
+        best = 3;
+    }
+    return best;
+}
 
 // A plain click chooses one transaction; Ctrl+click adds or removes one,
 // starting from the one already chosen; Shift+click chooses the run of rows
@@ -411,7 +700,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
     search := to_lower_temp(trim(buffer_string(*st.search)));
     key := hash_key(store.version, cast(u64) st.period, cast(u64) st.account, cast(u64) st.category, cast(u64) st.status, cast(u64) st.direction,
                     cast(u64) (st.table.sort_column + 3), cast(u64) st.table.sort_desc, cast(u64) app.today, cast(u64) (st.tag + 5), cast(u64) settings.exclude_transfers, cast(u64) st.hide_transfers,
-                    cast(u64) hash_key_string(search), user_data.excluded_version);
+                    cast(u64) hash_key_string(search), merchant_pills_hash(st), user_data.excluded_version);
     if key == st.rows_key return;
     st.rows_key = key;
 
@@ -435,6 +724,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
         if st.direction == 2 && txn.amount >= 0 continue;
         if st.hide_transfers && is_own_transfer(txn) continue;
         if !tag_matches(txn, st.tag) continue;
+        if st.merchants.count && !merchant_pinned(st, txn.description) continue;
         if !txn_matches(txn, search) continue;
         array_add(*indices, cast(s32) i);
         if counts_for(txn, account) {
@@ -452,7 +742,7 @@ rebuild_rows :: (st: *Transactions_State, acct_map: [] s32, cat_map: [] s32) {
     column := st.table.sort_column;
     by_date := column == COL_WHEN || column < 0;
     // Search results are usually a few scattered days: list them plainly.
-    grouped := by_date && !search.count;
+    grouped := by_date && !search.count && !st.merchants.count;
     if !by_date {
         sort_column_for_compare = column;
         quick_sort(indices, (a: s32, b: s32) -> int {
