@@ -4,11 +4,17 @@
 // shader (ui.metal is a port of ui.hlsl), so both look identical. The
 // presentation choices mirror the D3D11 ones:
 //
-// - Two drawables, and the drawable is acquired in renderer_wait_for_frame:
-//   nextDrawable blocks until the display has released one, which is what
-//   the frame latency waitable does on Windows. We wait *before* reading
-//   input and building the UI, so what is shown is never more than a frame
-//   old.
+// - With vsync, renderer_wait_for_frame blocks until the frame before the
+//   last is on screen (its drawable's presented handler): one frame queued
+//   at most, which is what the frame latency waitable does on Windows. We
+//   wait *before* reading input and building the UI, so what is shown is
+//   never more than a frame old.
+// - Three drawables. Pacing on nextDrawable with two only works while the
+//   window is composited: in fullscreen the display scans out of the
+//   drawable itself and frees it late, so every other refresh was missed
+//   and the app ran at half rate. With three, one is always free by the
+//   time the wait returns. (Waiting for the *last* frame instead misses a
+//   refresh too: the handler runs after the vsync it was shown at.)
 // - displaySyncEnabled off when vsync is off: frames present as soon as
 //   they're done (uncapped, and adaptive sync on displays that have it).
 // - While the window is live-resized, frames present with the Core
@@ -34,7 +40,9 @@ renderer_init :: () -> bool {
     // Captures (renderer_capture_png) read the drawable back; otherwise it
     // only ever is a render target.
     CAMetalLayer.setFramebufferOnly(mtl.layer, xx ifx scripted() then NO else YES);
+    CAMetalLayer.setMaximumDrawableCount(mtl.layer, 3);
     apply_vsync();
+    if !presented_signal presented_signal = dispatch_semaphore_create(0);
 
     if !create_pipeline() return false;
     log("Metal device: %\n", to_string(MTLDevice.name(mtl.device)));
@@ -61,6 +69,7 @@ renderer_wait_for_frame :: () {
     if mtl.waited return;
     mtl.waited = true;
     if !mtl.device return;
+    if mtl.vsync wait_for_presented();
     acquire_drawable();
 }
 
@@ -149,6 +158,15 @@ renderer_present :: () {
     // During a live resize the layer's new size is part of a Core Animation
     // transaction: present inside it, once the GPU work is scheduled.
     transaction := platform.in_modal_frame;
+    mtl.submitted += 1;
+    presented: Presented_Block;
+    presented.isa        = cast(*void) _NSConcreteStackBlock;
+    presented.invoke     = cast(*void) drawable_presented;
+    presented.descriptor = *presented_block_descriptor;
+    presented.frame      = mtl.submitted;
+    addPresentedHandler :: #type (*void, Selector, *Presented_Block) #c_call;
+    (cast(addPresentedHandler) objc_msgSend)(mtl.drawable, sel.addPresentedHandler_, *presented);   // Copied.
+
     if transaction != mtl.transaction {
         mtl.transaction = transaction;
         CAMetalLayer.setPresentsWithTransaction(mtl.layer, xx ifx transaction then YES else NO);
@@ -227,6 +245,9 @@ Metal_State :: struct {
     vsync:       bool;
     transaction: bool;             // presentsWithTransaction.
 
+    submitted: s64;                // Frames presented so far,
+    presented: s64;                // and the last one on screen (written by the presented handler).
+
     // Instances are written while earlier frames may still be on the GPU:
     // one buffer per frame in flight.
     frames: [3] Frame_Slot;
@@ -244,6 +265,10 @@ Atlas_Texture :: struct {
 
 mtl: Metal_State;
 
+// dispatch_semaphore_t, signalled by each presented handler. Never released:
+// a handler can still run after renderer_shutdown.
+presented_signal: *void;
+
 Frame_Constants :: struct {
     viewport_size:  [2] float;
     atlas_inv_size: [2] float;
@@ -255,6 +280,7 @@ DRAWABLE_FORMAT :: MTLPixelFormatBGRA8Unorm;   // UNORM: blending in sRGB, as on
 // Selectors the Metal module has no wrapper for. Each '_' is a ':'.
 Selectors :: struct {
     newLibraryWithData_error_: Selector;
+    addPresentedHandler_:      Selector;
 }
 sel: Selectors;
 
@@ -269,13 +295,46 @@ fail :: (what: string, error: *NSError) -> bool {
     return false;
 }
 
-// With vsync, two drawables: the wait blocks until the display has shown
-// the last frame. Without, a third lets frames be rendered while the
-// compositor holds the other two.
 apply_vsync :: () {
     mtl.vsync = renderer_settings.vsync;
     CAMetalLayer.setDisplaySyncEnabled(mtl.layer, xx ifx mtl.vsync then YES else NO);
-    CAMetalLayer.setMaximumDrawableCount(mtl.layer, xx ifx mtl.vsync then 2 else 3);
+}
+
+// Until at most one presented frame is still waiting for the display. A
+// drawable that is dropped (an occluded window) reports too; the timeout
+// covers one that never does.
+wait_for_presented :: () {
+    // Signals from frames already counted only wake us for nothing: drop them.
+    while dispatch_semaphore_wait(presented_signal, DISPATCH_TIME_NOW) == 0 {}
+    deadline := dispatch_time(DISPATCH_TIME_NOW, cast(s64) (MAX_FRAME_DT * 1_000_000_000));
+    while mtl.presented < mtl.submitted - 1 {
+        if dispatch_semaphore_wait(presented_signal, deadline) != 0 break;   // Timed out.
+    }
+}
+
+// A block literal (Clang's Block ABI, as in net/http_macos) for
+// addPresentedHandler, carrying the frame's number.
+Presented_Block :: struct {
+    isa:        *void;
+    flags:      s32;
+    reserved:   s32;
+    invoke:     *void;
+    descriptor: *Presented_Block_Descriptor;
+    frame:      s64;
+}
+
+Presented_Block_Descriptor :: struct {
+    reserved: u64;
+    size:     u64;
+}
+
+presented_block_descriptor := Presented_Block_Descriptor.{0, size_of(Presented_Block)};
+
+// On a Metal thread, once the frame is on screen (or dropped). Handlers run
+// in presentation order.
+drawable_presented :: (block: *Presented_Block, drawable: *void) #c_call {
+    mtl.presented = block.frame;
+    dispatch_semaphore_signal(presented_signal);
 }
 
 acquire_drawable :: () {
@@ -383,3 +442,9 @@ upload_atlas :: (gpu: *Atlas_Texture, atlas: *Glyph_Atlas, format: MTLPixelForma
 
 libdispatch :: #library,system "libSystem";
 dispatch_data_create :: (buffer: *void, size: u64, queue: *void, destructor: *void) -> *void #foreign libdispatch;
+dispatch_semaphore_create :: (value: s64) -> *void #foreign libdispatch;
+dispatch_semaphore_wait   :: (semaphore: *void, timeout: u64) -> s64 #foreign libdispatch;
+dispatch_semaphore_signal :: (semaphore: *void) -> s64 #foreign libdispatch;
+dispatch_release          :: (object: *void) #foreign libdispatch;
+dispatch_time             :: (when: u64, delta: s64) -> u64 #foreign libdispatch;
+DISPATCH_TIME_NOW :: 0;
