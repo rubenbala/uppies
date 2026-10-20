@@ -487,3 +487,57 @@ toolbar_rect :: (r: *Rect, rows := 1) -> Rect {
     return rect_inset_xy(bar, 0, px(10));   // Controls 32 tall, 10 above and below.
 }
 
+// The minimize, maximize and close buttons of a title bar Uppies draws
+// itself (platform.client_decorations: Wayland compositors that draw none,
+// GNOME's among them), at the right end of `bar`. Returns the width they
+// take: 0 when the window system draws the title bar.
+draw_window_controls :: (bar: Rect) -> float {
+    if !platform.client_decorations return 0;
+    w := px(42);
+    x := bar.x + bar.w - 3 * w;
+    h := bar.h - hairline();   // Above the bar's bottom border.
+    if window_control("Minimize##window", rect(x, bar.y, w, h), .MINIMIZE) platform_window_minimize();
+    if window_control(ifx platform.maximized then "Restore##window" else "Maximize##window", rect(x + w, bar.y, w, h), ifx platform.maximized then .RESTORE else .MAXIMIZE) {
+        platform_window_toggle_maximized();
+    }
+    if window_control("Close##window", rect(x + 2 * w, bar.y, w, h), .CLOSE) platform.quit_requested = true;
+    return 3 * w;
+}
+
+Window_Control :: enum u8 { MINIMIZE; MAXIMIZE; RESTORE; CLOSE; }
+
+// Drawn with lines rather than from a font, so they are crisp at any scale
+// and the same on every desktop. Close turns red under the mouse.
+window_control :: (label: string, r: Rect, kind: Window_Control) -> bool {
+    id := ui_id(label);
+    w := ui_widget(id);
+    io := ui_interact(id, r);
+    ui_animate(*w.hover, ifx io.hovered || io.held then 1.0 else 0.0, 22);
+    _, tooltip := split_from_left(label, "##");
+    ui_tooltip(id, io.hovered, tooltip);
+    b := snap(r);
+    close := kind == .CLOSE;
+    draw_rect(b, color_with_alpha(ifx close then theme.danger else theme.hover, w.hover));
+    color := color_lerp(theme.text_secondary, ifx close then rgb(0xFFFFFF) else theme.text, w.hover);
+
+    stroke := hairline();
+    s := floor(px(5));   // Half the glyph.
+    cx := floor(b.x + b.w * 0.5);
+    cy := floor(b.y + b.h * 0.5);
+    if kind == {
+        case .MINIMIZE;
+            draw_rect(rect(cx - s, cy, 2 * s, stroke), color);
+        case .MAXIMIZE;
+            draw_rect_outline(rect(cx - s, cy - s, 2 * s, 2 * s), 0, color, stroke);
+        case .RESTORE;   // A window in front of another.
+            d := floor(px(2));
+            draw_rect_outline(rect(cx - s, cy - s + d, 2 * s - d, 2 * s - d), 0, color, stroke);
+            draw_rect(rect(cx - s + d, cy - s, 2 * s - d, stroke), color);
+            draw_rect(rect(cx + s - stroke, cy - s, stroke, 2 * s - d), color);
+        case .CLOSE;
+            draw_line(cx - s, cy - s, cx + s, cy + s, stroke * 1.2, color);
+            draw_line(cx - s, cy + s, cx + s, cy - s, stroke * 1.2, color);
+    }
+    return io.clicked;
+}
+

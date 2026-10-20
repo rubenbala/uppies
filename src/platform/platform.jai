@@ -31,6 +31,12 @@ Platform_State :: struct {
     modal_frame: #type ();
     in_modal_frame: bool;
 
+    // The window system draws no title bar for the window (Wayland without
+    // server-side decorations): the app draws one and calls
+    // platform_window_move and its siblings. Never on Windows or macOS.
+    client_decorations: bool;
+    maximized: bool;   // Or tiled, or fullscreen: the window has no free edges.
+
     double_click_seconds: float = 0.5;
 }
 
@@ -175,6 +181,15 @@ input_release_all :: () {
 AES_KEY_SIZE   :: 32;   // AES-256.
 AES_NONCE_SIZE :: 12;   // The GCM standard nonce.
 AES_TAG_SIZE   :: 16;
+
+// The window controls of a title bar the app draws (client_decorations):
+// only Linux has them, so they do nothing elsewhere.
+#if OS != .LINUX {
+    platform_window_move :: () {}
+    platform_window_toggle_maximized :: () {}
+    platform_window_minimize :: () {}
+    platform_window_menu :: (x: float, y: float) {}
+}
 
 #if OS == .WINDOWS {
     #load "platform_windows.jai";

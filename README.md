@@ -51,7 +51,7 @@ delivery logs.
 
 Uppies runs on Windows 10 and 11, on Apple silicon Macs with macOS 13 or newer, and on 64-bit
 Linux (Ubuntu 22.04, Debian 12, Fedora 35 or newer, or anything with glibc 2.34 and a Vulkan
-driver) in an X11 or Wayland session.
+driver), natively on Wayland or X11.
 
 1. Download Uppies from the [latest release](https://github.com/rubenbala/uppies/releases/latest):
    the installer for Windows, the disk image (`.dmg`) for Mac, or the `.tar.gz` for Linux. On a
@@ -188,7 +188,8 @@ sudo pacman -S libx11 shaderc                      # Arch
 jai build.jai - bundle   # also makes bin/Uppies-<version>-linux-x86_64.tar.gz
 ```
 
-Everything else (Vulkan, libcurl, OpenSSL's libcrypto, libsecret, fontconfig, XRandR) is loaded
+Everything else (Vulkan, libwayland, libxkbcommon, libcurl, OpenSSL's libcrypto, libsecret,
+fontconfig, XRandR) is loaded
 when the app starts, so the executable links only libc and libX11 and runs on any distribution
 that has those. The tarball holds the executable, its icons, and
 [installer/linux/install.sh](installer/linux/install.sh), which installs it for the user.
@@ -197,8 +198,10 @@ Install `vulkan-validationlayers` and debug builds check their Vulkan calls too.
 Uppies keeps its key in the login keyring through the Secret Service whenever one is running
 (GNOME Keyring, KWallet), development builds included, and otherwise in `local.key` in its data
 folder. Once that file exists it is always used, so data is never split between two keys.
-`UPPIES_SCALE=1.5` overrides the display scale (normally your desktop's text scaling, Xft.dpi),
-and `UPPIES_GPU=intel` picks the graphics card by name. Uppies uses the integrated GPU by
+On Wayland Uppies runs natively, at the compositor's scale (fractional ones included), and draws
+its own window buttons in its header on desktops that leave that to apps (GNOME); `UPPIES_X11=1`
+runs it through XWayland instead. On X11, `UPPIES_SCALE=1.5` overrides the display scale (normally
+your desktop's text scaling, Xft.dpi). `UPPIES_GPU=intel` picks the graphics card by name. Uppies uses the integrated GPU by
 default, or the one `DRI_PRIME` picks. Saving PDFs asks where with `zenity` (or `kdialog` on KDE).
 
 ### Command-line options

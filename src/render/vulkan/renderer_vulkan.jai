@@ -81,9 +81,15 @@ renderer_wait_for_frame :: () {
         result := vk_call.WaitForPresentKHR(vk.device, vk.swapchain, vk.submitted - 1, PRESENT_WAIT_TIMEOUT);
         if result == .SUCCESS return;
         // A window that isn't shown never presents (hidden, minimized, on
-        // another workspace): pace on the GPU for a while instead.
+        // another workspace): pace on the GPU for a while instead, and at
+        // most at the refresh rate, since MAILBOX (Wayland) wouldn't hold
+        // frames back.
         if result == .TIMEOUT vk.present_wait_paused_until = seconds_since_init() + 1;
         else vk.recreate = true;
+    }
+    if vk.vsync && vk.present_wait && vk.present_wait_paused_until > 0 {
+        platform_sleep_until(vk.last_wait + 1.0 / max(platform.refresh_hz, 24));
+        vk.last_wait = seconds_since_init();
     }
     // Without present_wait: the GPU has finished the frame before the last.
     previous := *vk.frames[(vk.frame_index + FRAMES - 1) % FRAMES];
@@ -278,6 +284,7 @@ Vulkan_State :: struct {
     memory: VkPhysicalDeviceMemoryProperties;
     present_wait: bool;          // VK_KHR_present_id and VK_KHR_present_wait.
     present_wait_paused_until: float64;
+    last_wait: float64;          // When renderer_wait_for_frame last returned while paused.
     immediate_supported, mailbox_supported: bool;
     capture_supported: bool;
 
@@ -339,7 +346,8 @@ Vk_Instance :: struct {
     GetPhysicalDeviceMemoryProperties:        PFN_vkGetPhysicalDeviceMemoryProperties;
     EnumerateDeviceExtensionProperties:       PFN_vkEnumerateDeviceExtensionProperties;
     CreateDevice:                             PFN_vkCreateDevice;
-    CreateXlibSurfaceKHR:                     PFN_vkCreateXlibSurfaceKHR;
+    CreateXlibSurfaceKHR:                     PFN_vkCreateXlibSurfaceKHR; @optional
+    CreateWaylandSurfaceKHR:                  PFN_vkCreateWaylandSurfaceKHR; @optional
     DestroySurfaceKHR:                        PFN_vkDestroySurfaceKHR;
     GetPhysicalDeviceSurfaceSupportKHR:       PFN_vkGetPhysicalDeviceSurfaceSupportKHR;
     GetPhysicalDeviceSurfaceCapabilitiesKHR:  PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
@@ -441,7 +449,9 @@ create_instance :: () -> bool {
         if vk_global.EnumerateInstanceVersion(*version) == .SUCCESS && version >= VK_API_VERSION_1_1 api_version = VK_API_VERSION_1_1;
     }
 
-    extensions := *u8.["VK_KHR_surface".data, "VK_KHR_xlib_surface".data];
+    // The window system's surface: Wayland's or X11's (platform_linux).
+    window_system := ifx platform_wayland_surface then "VK_KHR_wayland_surface" else "VK_KHR_xlib_surface";
+    extensions := *u8.["VK_KHR_surface".data, window_system.data];
     layers: [..] *u8;
     layers.allocator = temp;
     #if !APP_RELEASE {
@@ -475,7 +485,14 @@ create_instance :: () -> bool {
 }
 
 create_surface :: () -> bool {
+    if platform_wayland_surface {
+        if !vk_call.CreateWaylandSurfaceKHR return fail("Loading vkCreateWaylandSurfaceKHR");
+        info := VkWaylandSurfaceCreateInfoKHR.{display = platform_wayland_display, surface = platform_wayland_surface};
+        if vk_call.CreateWaylandSurfaceKHR(vk.instance, *info, null, *vk.surface) != .SUCCESS return fail("vkCreateWaylandSurfaceKHR");
+        return true;
+    }
     if !platform_x11_vk_display || !platform_x11_window return fail("No X11 window");
+    if !vk_call.CreateXlibSurfaceKHR return fail("Loading vkCreateXlibSurfaceKHR");
     info := VkXlibSurfaceCreateInfoKHR.{dpy = platform_x11_vk_display, window = platform_x11_window};
     if vk_call.CreateXlibSurfaceKHR(vk.instance, *info, null, *vk.surface) != .SUCCESS return fail("vkCreateXlibSurfaceKHR");
     return true;
@@ -531,7 +548,15 @@ usable_queue_family :: (device: VkPhysicalDevice) -> u32, bool {
         if !(it.queueFlags & .GRAPHICS_BIT) continue;
         present: VkBool32;
         vk_call.GetPhysicalDeviceSurfaceSupportKHR(device, xx it_index, vk.surface, *present);
-        if present return xx it_index, true;
+        if !present continue;
+        // And it can say what the window takes: a GPU that can't share its
+        // buffers with this compositor (one without dmabuf) answers yes
+        // above, then fails here.
+        capabilities: VkSurfaceCapabilitiesKHR;
+        format_count: u32;
+        if vk_call.GetPhysicalDeviceSurfaceCapabilitiesKHR(device, vk.surface, *capabilities) != .SUCCESS return 0, false;
+        if vk_call.GetPhysicalDeviceSurfaceFormatsKHR(device, vk.surface, *format_count, null) != .SUCCESS || !format_count return 0, false;
+        return xx it_index, true;
     }
     return 0, false;
 }
@@ -604,7 +629,10 @@ create_swapchain :: () -> bool {
     vk.asked_width, vk.asked_height = platform.width, platform.height;
 
     capabilities: VkSurfaceCapabilitiesKHR;
-    vk_call.GetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physical, vk.surface, *capabilities);
+    if vk_call.GetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physical, vk.surface, *capabilities) != .SUCCESS {
+        vk.width, vk.height = 0, 0;
+        return fail("vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+    }
     if capabilities.currentExtent.width != 0xFFFF_FFFF {
         vk.width, vk.height = xx capabilities.currentExtent.width, xx capabilities.currentExtent.height;
     }
@@ -620,6 +648,13 @@ create_swapchain :: () -> bool {
     if !vk.vsync {
         if vk.immediate_supported    mode = .IMMEDIATE_KHR;
         else if vk.mailbox_supported mode = .MAILBOX_KHR;
+    } else if platform_wayland_surface && vk.present_wait && vk.mailbox_supported {
+        // Wayland's FIFO waits inside vkQueuePresentKHR, without a timeout, for
+        // the compositor's frame callback, which never comes while the window
+        // isn't shown (another workspace, a compositor's own idea): the app
+        // would hang. MAILBOX never waits there, and the pacing is the same:
+        // renderer_wait_for_frame waits for the frame before the last.
+        mode = .MAILBOX_KHR;
     }
 
     images := max(cast(u32) 3, capabilities.minImageCount);
@@ -1070,6 +1105,15 @@ VkXlibSurfaceCreateInfoKHR :: struct {
     window: u64;     // Window
 }
 PFN_vkCreateXlibSurfaceKHR :: #type (instance: VkInstance, pCreateInfo: *VkXlibSurfaceCreateInfoKHR, pAllocator: *VkAllocationCallbacks, pSurface: *VkSurfaceKHR) -> VkResult #c_call;
+
+VkWaylandSurfaceCreateInfoKHR :: struct {
+    sType:   VkStructureType = xx 1000006000;   // VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR
+    pNext:   *void;
+    flags:   u32;
+    display: *void;   // wl_display*
+    surface: *void;   // wl_surface*
+}
+PFN_vkCreateWaylandSurfaceKHR :: #type (instance: VkInstance, pCreateInfo: *VkWaylandSurfaceCreateInfoKHR, pAllocator: *VkAllocationCallbacks, pSurface: *VkSurfaceKHR) -> VkResult #c_call;
 
 VkPresentIdKHR :: struct {
     sType:          VkStructureType = xx 1000294000;   // VK_STRUCTURE_TYPE_PRESENT_ID_KHR

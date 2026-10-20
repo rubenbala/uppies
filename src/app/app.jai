@@ -138,6 +138,13 @@ app_frame :: () {
 
     draw_toasts(full);
     draw_confirm();
+    // A window that draws its own title bar draws its own edge too, over
+    // everything (but not when maximized: then it has no edges).
+    if platform.client_decorations && !platform.maximized {
+        layer := draw_set_layer(.OVERLAY);
+        draw_rect_outline(full, 0, theme.border_strong, hairline());
+        draw_set_layer(layer);
+    }
     if in_console handle_hotkeys();
     app.was_animating = ui.animating;
 }
@@ -328,6 +335,9 @@ draw_top_bar :: (r: Rect) {
     draw_rect(r, theme.chrome);
     ui_divider(r.x, r.y + r.h - hairline(), r.w, theme.border);
     bar := rect_inset_xy(r, px(14), 0);
+    // The window's own buttons at the far right, when Uppies draws its title bar.
+    controls_w := draw_window_controls(r);
+    if controls_w > 0 bar.w -= controls_w - px(6);
     brand_w := draw_brand(bar);
     cut_left(*bar, brand_w + px(18));
     ui_vdivider(bar.x - px(1), bar.y + px(13), bar.h - px(26), theme.border);
@@ -404,6 +414,7 @@ draw_top_bar :: (r: Rect) {
         iw := ui_spring(*app.tab_w, active_w, 520, 0.84);
         draw_rect(snap(rect(ix, r.y + r.h - px(2), iw, px(2))), theme.accent);
     }
+    ui_title_bar_space(r);
 }
 
 draw_spinner :: (cx: float, cy: float, radius: float, color: Color = 0) {
@@ -670,6 +681,8 @@ draw_connect_screen :: (full: Rect) {
     draw_rect(top, theme.chrome);
     ui_divider(top.x, top.y + top.h - hairline(), top.w, theme.border);
     draw_brand(rect_inset_xy(top, px(14), 0));
+    draw_window_controls(top);
+    ui_title_bar_space(top);
 
     st := *app.connect;
     connecting := sync.phase == .CONNECTING;

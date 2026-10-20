@@ -10,7 +10,9 @@ src/platform/                Window, input, cursor, OS services
     platform.jai             The platform API + shared input state (OS independent)
     platform_windows.jai     Win32 implementation
     platform_macos.jai       Cocoa implementation
-    platform_linux.jai       X11 (Xlib) implementation
+    platform_linux.jai       Linux implementation: picks the window system, shared services
+    linux_wayland.jai        Linux: the Wayland window system (xdg-shell and friends)
+    linux_x11.jai            Linux: the X11 window system (Xlib)
     linux_dl.jai             Linux: libraries loaded at run time (dlopen)
 src/render/                  Everything that turns a frame into pixels
     draw.jai                 The draw list: one 96-byte instance per primitive
@@ -115,8 +117,13 @@ command buffer, fence, instance buffer, atlas staging buffer and descriptor set;
 copied in the frame's command buffer, and a replaced atlas image is destroyed when its slot comes
 round again. `renderer_wait_for_frame` is `vkWaitForPresentKHR` on the frame before the last
 (VK_KHR_present_wait: the counterpart of the latency waitable); without it, or while the window
-isn't presenting, it waits on that frame's fence. Vsync is FIFO; without it, IMMEDIATE (tearing,
-variable refresh) or MAILBOX. A lost device is recreated from CPU-side state. `libvulkan.so.1` is
+isn't presenting, it waits on that frame's fence (and no faster than the refresh rate). Vsync is
+FIFO; without it, IMMEDIATE (tearing, variable refresh) or MAILBOX. On Wayland vsync is MAILBOX
+paced by that same present wait: Wayland's FIFO blocks inside `vkQueuePresentKHR`, with no
+timeout, until the compositor's frame callback, which never comes for a window it isn't showing
+(minimized, another workspace), and the app would hang. A device is only chosen if it can say what
+the window's surface takes: a GPU that can't share buffers with the compositor (one without
+dmabuf) claims it can present, then fails there, and the next device (llvmpipe, say) is used. A lost device is recreated from CPU-side state. `libvulkan.so.1` is
 loaded at run time and every procedure comes through `vkGetInstanceProcAddr`; the structs newer
 than the Jai module's headers (Xlib surface, present id and wait) are declared in the backend.
 The integrated GPU is preferred, as on the other platforms; `DRI_PRIME` or `UPPIES_GPU` choose
@@ -199,12 +206,13 @@ also makes `bin/Uppies.app`: the executable, `data/` in `Contents/Resources` (fo
 It then puts the app beside a link to `/Applications` in `bin/Uppies-<version>-mac.dmg` (`hdiutil`),
 with a `.sha256` beside it, as the Windows installer has.
 
-**Linux** (`platform_linux.jai`): an Xlib window, which also runs on Wayland desktops through
-XWayland. The executable links only libc and libX11; Vulkan, libcurl, OpenSSL's libcrypto,
+**Linux** (`platform_linux.jai`): a native Wayland window (`linux_wayland.jai`) when
+`WAYLAND_DISPLAY` is set (unless `UPPIES_X11=1`), otherwise, or when the compositor can't be
+used, an Xlib window (`linux_x11.jai`). The executable links only libc and libX11; Vulkan, libcurl, OpenSSL's libcrypto,
 libsecret (with GLib), fontconfig and libXrandr are opened with `dlopen` by their versioned
 sonames (`linux_dl.jai` fills a struct of procedure pointers named after the symbols), so building
 needs no -dev packages for them and a missing one turns its feature off instead of stopping the
-app. The Vulkan surface uses an X connection of its own, so the driver's threads never read the
+app. On X11, the Vulkan surface uses an X connection of its own, so the driver's threads never read the
 events of the one the main loop sleeps on: `poll()` on that connection and an eventfd, which
 `platform_wake` writes from any thread (Xlib is only called on the main thread). There is no modal
 loop: resizes arrive as ordinary events. Until the first frame, the window's background pixel is
@@ -219,6 +227,27 @@ others' with a bounded wait that leaves other events queued, and hands its text 
 manager on exit. Fonts are what fontconfig picks for `sans-serif` and `monospace` (with the face
 index, for variable fonts and collections); icons are the same Unicode stand-ins as on macOS,
 from DejaVu Sans and the Noto symbol fonts, with alternatives where those lack the first choice.
+
+On Wayland, libwayland-client, libwayland-cursor and libxkbcommon are loaded at run time too,
+and the protocols beyond the core one (xdg-shell, xdg-decoration, fractional-scale, viewporter,
+cursor-shape, xdg-activation) are declared in `linux_wayland.jai` (`define_protocols`: each
+message's signature and argument types, as wayland-scanner would write them); requests go
+through `wl_proxy_marshal_flags`, events to listener structs of `#c_call` procedures. The surface
+is mapped by the first frame Vulkan presents, so it appears with content. Sizes from the
+compositor are logical; the buffer is drawn at `round(logical * scale)` for the compositor's
+fractional scale and shown at the logical size through `wp_viewport` (else the integer buffer
+scale), so 125% is as sharp as 100%. The main loop uses libwayland's `prepare_read` protocol on
+the socket (Vulkan reads it too, for its own queue) plus the eventfd. Keys arrive as evdev codes
+with an XKB keymap: xkbcommon gives keysyms (mapped like X11's) and text, its compose tables
+dead keys and Compose, and repeats are ours to time (the wait's timeout includes the next one).
+The clipboard is `wl_data_device`: our selection is served from memory, others' read through a
+pipe with a one-second limit. Where the compositor draws title bars (`zxdg_decoration_manager_v1`:
+KDE, Sway, Hyprland), it does; where it doesn't (GNOME, Weston), `platform.client_decorations` is
+set and the app's header becomes the title bar: `draw_window_controls` (`app/widgets.jai`) draws
+minimize, maximize and close, `ui_title_bar_space` turns the header's empty space into the place
+to drag (`xdg_toplevel.move`), double-click and right-click, and the platform layer resizes from
+the window's edges and shows their cursors. Scripted and `-hidden` runs show their window on
+Wayland: a surface with content is mapped.
 
 HTTPS is libcurl, with a pool of easy handles reused across requests (connections and TLS
 sessions stay warm). AES-256-GCM is OpenSSL's EVP; `platform_protect` uses macOS's layout under a

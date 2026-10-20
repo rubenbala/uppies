@@ -396,6 +396,20 @@ ui_vdivider :: (x: float, y: float, h: float, color: Color = 0) {
     draw_rect(snap(rect(x, y, hairline(), h)), ifx color then color else theme.divider);
 }
 
+// The empty part of a title bar the app draws itself (platform.client_decorations,
+// when the window system draws none): dragging it moves the window,
+// double-clicking it maximizes or restores the window, and right-clicking it
+// opens the window manager's menu. Call it after the widgets in the bar, which
+// keep their own clicks.
+ui_title_bar_space :: (r: Rect) {
+    if !platform.client_decorations || ui.hot || ui.active || !ui_mouse_in(r) return;
+    if input.mouse_pressed[Mouse_Button.LEFT] {
+        if ui.click_count >= 2 platform_window_toggle_maximized();
+        else platform_window_move();
+    }
+    if input.mouse_pressed[Mouse_Button.RIGHT] platform_window_menu(input.mouse_x, input.mouse_y);
+}
+
 //
 // Buttons.
 //

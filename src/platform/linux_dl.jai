@@ -30,6 +30,21 @@ dl_load :: (table: *$T, sonames: [] string, prefix := "") -> bool {
     return false;
 }
 
+// The first of `sonames` that opens, kept open; null if none does. For
+// libraries whose data (not only procedures) is wanted: see dl_symbol.
+dl_open :: (sonames: [] string) -> *void {
+    for sonames {
+        handle := DL.dlopen(temp_c_string(it), DL.RTLD_NOW | DL.RTLD_LOCAL);
+        if handle return handle;
+    }
+    return null;
+}
+
+// A symbol's address in a library from dl_open: a variable, or a procedure.
+dl_symbol :: (handle: *void, name: string) -> *void {
+    return DL.dlsym(handle, temp_c_string(name));
+}
+
 // Fills `table` from an open library; false (and an empty table) if a
 // symbol that isn't @optional is missing.
 dl_fill :: (table: *$T, handle: *void, prefix := "") -> bool {
