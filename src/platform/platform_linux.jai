@@ -580,7 +580,10 @@ find_program :: (name: string) -> string {
 
 make_private_directory :: (path: string) {
     make_directory_if_it_does_not_exist(path, recursive = true);
-    POSIX.chmod(temp_c_string(path), POSIX.S_IRWXU);
+    if POSIX.chmod(temp_c_string(path), POSIX.S_IRWXU) != 0 {
+        // The files in it are 0600 anyway (platform_write_file_atomic).
+        log_error("Could not make % private to this user.\n", path);
+    }
 }
 
 // The key behind platform_protect, made on first use and kept for the

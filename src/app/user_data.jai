@@ -29,7 +29,7 @@ user_data_save :: () {
     cipher, ok := platform_protect(user_data_text(), USER_DATA_ENTROPY);
     if !ok { app_toast(.ERROR, "Couldn't save that change on this device."); return; }
     defer free(cipher);
-    write_entire_file(user_data_path(), cipher);
+    platform_write_file_atomic(user_data_path(), cast([] u8) cipher);
 }
 
 // Replaces what we were told with the lines in `plain`.

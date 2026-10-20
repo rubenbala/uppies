@@ -66,7 +66,8 @@ settings_save :: () {
     print_to_builder(*builder, "remember_token=%\n", settings.remember_token);
     print_to_builder(*builder, "store_locally=%\n", settings.store_locally);
     print_to_builder(*builder, "theme=%\n", settings.theme);
-    write_entire_file(tprint("%/settings.ini", platform_app_data_dir()), *builder);
+    text := builder_to_string(*builder,, temp);
+    platform_write_file_atomic(tprint("%/settings.ini", platform_app_data_dir()), cast([] u8) text);
 }
 
 // The user's own themes: *.toml files here (see ui/themes.jai). None in a
@@ -93,7 +94,8 @@ token_save :: (token: string) -> bool {
     cipher, ok := platform_protect(token);
     if !ok return false;
     defer free(cipher);
-    return write_entire_file(token_path(), cipher);
+    // Never half-written: a crash keeps the previous token.
+    return platform_write_file_atomic(token_path(), cast([] u8) cipher);
 }
 
 token_forget :: () {
