@@ -338,7 +338,8 @@ selftest :: () -> int {
     d := civil_from_days(days_from_civil(2024, 2, 29));
     check(d.year == 2024 && d.month == 2 && d.day == 29, "civil round trip");
 
-    // Secrets at rest: DPAPI (Windows) or the Keychain key (macOS) round trip.
+    // Secrets at rest: DPAPI (Windows), the Keychain key (macOS) or the keyring key
+    // (Linux) round trip.
     secret := "up:yeah:not-a-real-token-0123456789";
     cipher, protected := platform_protect(secret);
     check(protected && cipher != secret, "token encrypts");
@@ -553,6 +554,21 @@ selftest :: () -> int {
         }
     } else {
         check(false, "the icon font loads");
+    }
+
+    // Linux: X keys to the Key enum, by keysym and, for layouts without
+    // Latin letters, by place; the display scale from the X resources.
+    #if OS == .LINUX {
+        check(key_from_keysym(#char "a") == cast(Key) #char "A" && key_from_keysym(#char "Q") == cast(Key) #char "Q" && key_from_keysym(#char "7") == cast(Key) #char "7",
+              "keysyms: letters and digits");
+        check(key_from_keysym(0xff0d) == .ENTER && key_from_keysym(0xff8d) == .ENTER && key_from_keysym(0xfe20) == .TAB
+              && key_from_keysym(0xff96) == .LEFT && key_from_keysym(0xffc9) == .F12 && key_from_keysym(0xffe4) == .CONTROL
+              && key_from_keysym(0x6c1) == .UNKNOWN,   // Cyrillic а.
+              "keysyms: Enter, Shift+Tab, keypad, F12, Ctrl; Cyrillic is no letter");
+        check(key_from_keycode(38) == cast(Key) #char "A" && key_from_keycode(19) == cast(Key) #char "0" && key_from_keycode(58) == cast(Key) #char "M"
+              && key_from_keycode(9) == .UNKNOWN, "keys by place: A, 0, M on a US keyboard");
+        check(parse_xft_dpi("Xft.antialias:\t1\nXft.dpi:\t144\nXft.hinting:\t1\n") == 144 && parse_xft_dpi("Xcursor.size: 24\n") == 0
+              && parse_xft_dpi("Xft.dpi: 120.5") == 120.5, "Xft.dpi from the X resources");
     }
 
     print("\n% failure(s)\n", failures);

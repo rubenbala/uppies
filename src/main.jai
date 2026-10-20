@@ -1,4 +1,5 @@
-// Uppies: a desktop app on Jai and Direct3D (Windows) or Metal (macOS).
+// Uppies: a desktop app on Jai and Direct3D (Windows), Metal (macOS) or
+// Vulkan (Linux).
 //
 // Frame structure (see run_frame):
 //
@@ -13,8 +14,9 @@
 //
 //   app/        the screens
 //   ui/         immediate-mode widgets, animation state, theme
-//   render/     draw list, fonts, graphics backends (d3d11/, metal/)
-//   platform/   window, input, OS services (platform_windows.jai, platform_macos.jai)
+//   render/     draw list, fonts, graphics backends (d3d11/, metal/, vulkan/)
+//   platform/   window, input, OS services (platform_windows.jai, platform_macos.jai,
+//               platform_linux.jai)
 //   core/       math, rectangles, colors, animation curves
 
 #import "Basic";
@@ -26,7 +28,7 @@
 #import "System";
 #import "Sort";
 #import "Thread";
-#import "Clipboard";
+#if OS != .LINUX #import "Clipboard";   // Linux has its own (platform_linux.jai).
 #if OS == .WINDOWS {
     #import "Windows";
     #import "Windows_Utf8";
@@ -44,8 +46,10 @@ FT :: #import "freetype";
 #load "platform/platform.jai";
 #if OS == .WINDOWS {
     #load "net/http_windows.jai";
-} else {
+} else #if OS == .MACOS {
     #load "net/http_macos.jai";
+} else {
+    #load "net/http_linux.jai";
 }
 #load "up/model.jai";
 #load "up/store.jai";
@@ -239,7 +243,8 @@ scripted :: inline () -> bool {
     else return script.active;
 }
 
-// Frames that Win32's modal move/resize loop asks for (see platform_windows).
+// Frames that the OS asks for while it blocks the main loop: Win32's modal
+// move/resize loop, AppKit's live resize (see platform_windows, platform_macos).
 modal_frame :: () {
     if platform.minimized return;
     renderer_wait_for_frame();

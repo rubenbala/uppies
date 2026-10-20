@@ -1,7 +1,8 @@
 // The local store file: everything synced from Up, saved between runs so the
 // app opens instantly and only downloads what changed.
 //
-// One file, %APPDATA%/Uppies/store.uppies, written in one step (a temporary
+// One file, store.uppies in platform_app_data_dir (%APPDATA%/Uppies on
+// Windows), written in one step (a temporary
 // file renamed over the old one) so it is always either the previous save or
 // the new one.
 //
@@ -11,13 +12,14 @@
 //   12      4     wrapped key size, K
 //   16      8     payload size, N
 //   24      12    AES-GCM nonce
-//   36      K     wrapped key: the payload key, encrypted with DPAPI
+//   36      K     wrapped key: the payload key, sealed with platform_protect
 //   36+K    N     payload, encrypted with AES-256-GCM
 //   36+K+N  16    GCM authentication tag
 //
 // Every save draws a new random 256-bit key and nonce. The key is wrapped by
-// DPAPI with the Up access token as extra entropy, so the file opens only
-// for this Windows user *and* with the same token. The header (bytes 0 to
+// platform_protect (DPAPI on Windows, a Keychain or keyring key on macOS and
+// Linux) with the Up access token as extra entropy, so the file opens only
+// for this user *and* with the same token. The header (bytes 0 to
 // 36+K) is authenticated along with the payload: a file that was altered,
 // truncated or half-written fails to open and is simply downloaded again.
 //

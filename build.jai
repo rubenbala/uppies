@@ -1,6 +1,6 @@
 // Build metaprogram for Uppies.
 //
-//     jai build.jai                 debug build   -> bin/uppies.exe (bin/uppies on macOS)
+//     jai build.jai                 debug build   -> bin/uppies.exe (bin/uppies on macOS and Linux)
 //     jai build.jai - release       optimized build (no console window)
 //     jai build.jai - run           build, then launch the app
 //     jai build.jai - bundle        release build, then what a release ships, each
@@ -8,11 +8,19 @@
 //                                   Windows: bin/Uppies-<version>-setup.exe (Inno Setup 6)
 //                                   macOS:   bin/Uppies-<version>-mac.dmg (Uppies.app and
 //                                            a link to drag it into Applications)
+//                                   Linux:   bin/Uppies-<version>-linux-x86_64.tar.gz (the
+//                                            executable, icons and install.sh)
 //
 // Shaders are compiled here, at build time, and their bytecode is embedded
 // in the executable: no shader compiler ships with the app, startup never
 // waits on compilation, and a shader error is a build error. The icon is
-// embedded the same way, from assets/icon.png (Windows only, for now).
+// embedded the same way, from assets/icon.png (Windows and Linux).
+//
+// Linux compiles the Vulkan shaders with glslc (apt install glslc), or
+// glslangValidator if that is what is installed, and needs libX11's
+// development files (apt install libx11-dev). Everything else the app uses
+// (Vulkan, libcurl, OpenSSL, libsecret, fontconfig, XRandR) it loads at
+// run time, so nothing else is needed to build.
 //
 // macOS compiles Metal shaders with Xcode's `metal` and `metallib`, from the
 // Metal Toolchain component (once: xcodebuild -downloadComponent MetalToolchain).
@@ -34,10 +42,19 @@
     #import "Windows_Utf8";
     #import "d3d_compiler";
 }
+#if OS == .LINUX {
+    POSIX            :: #import "POSIX";
+    STB_Image        :: #import "stb_image";
+    STB_Image_Resize :: #import "stb_image_resize";
+    STB_Image_Write  :: #import "stb_image_write";
+}
 
 // The one place the version lives: the program gets it as APP_VERSION (the
 // About panel, the User-Agent), and so does the macOS bundle's Info.plist.
 APP_VERSION :: "1.0.2";
+
+APP_NAME :: "Uppies";
+APP_ID   :: "au.net.ruben.uppies";   // The macOS bundle identifier; the Linux desktop entry and icon name.
 
 OUTPUT_DIR :: "bin";
 EXE_NAME   :: "uppies";
@@ -56,10 +73,6 @@ build :: () {
             case "release"; release = true;
             case "run";     run = true;
             case "bundle";
-                #if OS != .MACOS && OS != .WINDOWS {
-                    log_error("'bundle' makes a macOS app bundle or a Windows installer; build on one of those for it.\n");
-                    return;
-                }
                 bundle = true;
                 release = true;   // Only release builds are packaged.
             case; log_error("Unknown build argument '%'. Valid: release, run, bundle\n", it);
@@ -70,6 +83,10 @@ build :: () {
 
     shader_source, shaders_ok := compile_shaders();
     if !shaders_ok return;
+    #if OS == .LINUX {
+        icon_source, icon_ok := window_icon_source();
+        if !icon_ok return;
+    }
 
     w := compiler_create_workspace(EXE_NAME);
     if !w {
@@ -95,6 +112,7 @@ build :: () {
     add_build_string(tprint("APP_BUNDLE :: %;\n", bundle), w);   // What ships: no -script or -selftest.
     add_build_string(tprint("APP_VERSION :: \"%\";\n", APP_VERSION), w);
     add_build_string(shader_source, w);
+    #if OS == .LINUX add_build_string(icon_source, w);
     add_build_file(tprint("%/src/main.jai", #filepath), w);
 
     success := true;
@@ -140,6 +158,9 @@ build :: () {
     #if OS == .WINDOWS {
         if bundle && !make_installer() return;
     }
+    #if OS == .LINUX {
+        if bundle && !make_tarball() return;
+    }
 
     if run {
         run_command(exe, working_directory = path_strip_filename(exe), capture_and_return_output = false);
@@ -159,6 +180,16 @@ Shader_Entry :: struct {
     SHADERS :: Shader_Entry.[
         .{"shader_ui_vs", "src/render/d3d11/ui.hlsl", "vs_main", "vs_5_0"},
         .{"shader_ui_ps", "src/render/d3d11/ui.hlsl", "ps_main", "ps_5_0"},
+    ];
+}
+
+#if OS == .LINUX {
+    // One GLSL file holds both stages (src/render/vulkan/ui.glsl), compiled
+    // once per stage with that stage's macro defined. `entry` is the macro,
+    // `target` the stage.
+    VULKAN_SHADERS :: Shader_Entry.[
+        .{"shader_ui_vert", "src/render/vulkan/ui.glsl", "VERTEX_SHADER",   "vert"},
+        .{"shader_ui_frag", "src/render/vulkan/ui.glsl", "FRAGMENT_SHADER", "frag"},
     ];
 }
 
@@ -198,6 +229,37 @@ compile_shaders :: () -> string, bool {
             append_byte_array(*builder, it.name, cast([] u8) bytes);
         }
     }
+    #if OS == .LINUX {
+        intermediate := tprint("%/.build", #filepath);
+        make_directory_if_it_does_not_exist(intermediate, recursive = true);
+        glslc := find_program("glslc");
+        glslang := ifx glslc then "" else find_program("glslangValidator");
+        if !glslc && !glslang {
+            log_error("No GLSL compiler found for the Vulkan shaders. Install glslc:\n    apt install glslc    (Debian, Ubuntu)\n    dnf install glslc    (Fedora)\n    pacman -S shaderc    (Arch)\nor glslang (glslangValidator).\n");
+            return "", false;
+        }
+        for VULKAN_SHADERS {
+            path := tprint("%/%", #filepath, it.file);
+            spv  := tprint("%/%.spv", intermediate, it.name);
+            ok: bool;
+            if glslc ok = run_tool(glslc, tprint("-fshader-stage=%", it.target), tprint("-D%", it.entry), "--target-env=vulkan1.0", "-O", "-Werror", path, "-o", spv);
+            else     ok = run_tool(glslang, "-V", "--target-env", "vulkan1.0", "-S", it.target, tprint("-D%", it.entry), path, "-o", spv);
+            if !ok {
+                log_error("Shader compilation failed (% %).\n", it.file, it.target);
+                return "", false;
+            }
+            bytes, read_ok := read_entire_file(spv);
+            if !read_ok || bytes.count % 4 != 0 {
+                log_error("Could not read %\n", spv);
+                return "", false;
+            }
+            // SPIR-V is 32-bit words, and vkCreateShaderModule wants it aligned to them.
+            words: [] u32;
+            words.data  = cast(*u32) bytes.data;
+            words.count = bytes.count / 4;
+            append_u32_array(*builder, it.name, words);
+        }
+    }
     #if OS == .WINDOWS {
         for SHADERS {
             path := tprint("%/%", #filepath, it.file);
@@ -227,6 +289,15 @@ append_byte_array :: (builder: *String_Builder, name: string, bytes: [] u8) {
     append(builder, "\n];\n");
 }
 
+append_u32_array :: (builder: *String_Builder, name: string, words: [] u32) {
+    print_to_builder(builder, "% := u32.[", name);
+    for words {
+        if it_index % 8 == 0  append(builder, "\n    ");
+        print_to_builder(builder, "0x%,", formatInt(it, base = 16, minimum_digits = 8));
+    }
+    append(builder, "\n];\n");
+}
+
 // Writes <path>.sha256 beside a file a release ships: "<hash>  <file name>",
 // the format sha256sum -c and shasum -c read. Uploaded with the release so a
 // download can be checked against it. The OS's own tool does the hashing.
@@ -241,7 +312,8 @@ write_sha256_file :: (path: string) -> bool {
         }
     } else {
         // "<hash>  <path>"
-        _, out := run_command("shasum", "-a", "256", path, capture_and_return_output = true);
+        #if OS == .LINUX  _, out := run_command("sha256sum", path, capture_and_return_output = true);
+        else              _, out := run_command("shasum", "-a", "256", path, capture_and_return_output = true);
         found, first := split_from_left(trim(out), " ");
         if found hash = first;
     }
@@ -318,9 +390,7 @@ is_sha256 :: (s: string) -> bool {
         return ifx identity then identity else "-";
     }
 
-    APP_NAME      :: "Uppies";
     APP_BUNDLE    :: "Uppies.app";
-    APP_ID        :: "au.net.ruben.uppies";
     APP_COPYRIGHT :: "© 2026 Ruben Bala";
 
     // bin/Uppies.app: the executable, data/ as resources, an icon made from
@@ -443,13 +513,14 @@ is_sha256 :: (s: string) -> bool {
 </plist>
 PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT);
     }
+}
 
-    run_tool :: (args: .. string) -> bool {
-        result, out, err := run_command(.. args, capture_and_return_output = true);
-        if out print("%", out);
-        if err print("%", err);
-        return result.type == .EXITED && result.exit_code == 0;
-    }
+// Runs a build tool, showing what it printed; true if it succeeded.
+run_tool :: (args: .. string) -> bool {
+    result, out, err := run_command(.. args, capture_and_return_output = true);
+    if out print("%", out);
+    if err print("%", err);
+    return result.type == .EXITED && result.exit_code == 0;
 }
 
 #if OS == .WINDOWS {
@@ -523,11 +594,129 @@ PLIST, APP_NAME, EXE_FILE, APP_ID, APP_VERSION, MACOS_MIN_VERSION, APP_COPYRIGHT
     }
 }
 
+#if OS == .LINUX {
+    // The window icon (_NET_WM_ICON) at the sizes window managers and task
+    // switchers pick from, as `app_icon_pixels`: for each size its width,
+    // height, then width * height pixels as 0xAARRGGBB, not premultiplied,
+    // which is the property's own layout.
+    WINDOW_ICON_SIZES :: s32.[16, 24, 32, 48, 64, 128];
+
+    // The bundle's hicolor icons, for the desktop entry.
+    BUNDLE_ICON_SIZES :: s32.[16, 24, 32, 48, 64, 128, 256];
+
+    window_icon_source :: () -> string, bool {
+        builder: String_Builder;
+        print_to_builder(*builder, "app_icon_pixels := u32.[");
+        for size: WINDOW_ICON_SIZES {
+            rgba, ok := icon_rgba(size);
+            if !ok return "", false;
+            print_to_builder(*builder, "\n    %, %,", size, size);
+            for i: 0..size * size - 1 {
+                if i % 8 == 0  append(*builder, "\n    ");
+                p := rgba.data + i * 4;
+                argb := (cast(u32) p[3] << 24) | (cast(u32) p[0] << 16) | (cast(u32) p[1] << 8) | p[2];
+                print_to_builder(*builder, "0x%,", formatInt(argb, base = 16, minimum_digits = 8));
+            }
+        }
+        append(*builder, "\n];\n");
+        return builder_to_string(*builder), true;
+    }
+
+    // assets/icon.png resized to size x size, RGBA (temporary storage).
+    icon_rgba :: (size: s32) -> [] u8, bool {
+        png := tprint("%/%", #filepath, ICON_FILE);
+        w, h, channels: s32;
+        pixels := STB_Image.stbi_load(temp_c_string(png), *w, *h, *channels, 4);
+        if !pixels {
+            log_error("Could not read %\n", png);
+            return .[], false;
+        }
+        defer STB_Image.stbi_image_free(pixels);
+        out := NewArray(size * size * 4, u8,, temp);
+        // Filtered in linear light, weighted by alpha, as the icon tools on
+        // the other platforms do.
+        if !STB_Image_Resize.stbir_resize_uint8_srgb(pixels, w, h, 0, out.data, size, size, 0, 4, 3, 0) {
+            log_error("Could not resize % to % px\n", png, size);
+            return .[], false;
+        }
+        return out, true;
+    }
+
+    // bin/Uppies-<version>-linux-x86_64.tar.gz: one folder holding the
+    // executable, data/, the icons, install.sh (which puts the app in
+    // ~/.local and adds it to the desktop's menus) and the licenses.
+    make_tarball :: () -> bool {
+        name    := tprint("%-%-linux-x86_64", APP_NAME, APP_VERSION);
+        staging := tprint("%/.build/tarball", #filepath);
+        root    := tprint("%/%", staging, name);
+        if !run_tool("rm", "-rf", staging) return false;
+        make_directory_if_it_does_not_exist(root, recursive = true);
+
+        bin := tprint("%/%", #filepath, OUTPUT_DIR);
+        if !copy_file(tprint("%/%", bin, EXE_FILE), tprint("%/%", root, EXE_FILE)) {
+            log_error("Could not copy the executable into %\n", root);
+            return false;
+        }
+        run_tool("chmod", "755", tprint("%/%", root, EXE_FILE));
+        if is_directory(tprint("%/data", bin)) copy_directory(tprint("%/data", bin), tprint("%/data", root));
+
+        installer := tprint("%/installer/linux/install.sh", #filepath);
+        if !copy_file(installer, tprint("%/install.sh", root)) {
+            log_error("Could not copy %\n", installer);
+            return false;
+        }
+        run_tool("chmod", "755", tprint("%/install.sh", root));
+        copy_file(tprint("%/LICENSE", #filepath), tprint("%/LICENSE", root));
+        copy_file(tprint("%/THIRD_PARTY.md", #filepath), tprint("%/THIRD_PARTY.md", root));
+        // FreeType is linked into the executable, so its license goes with it.
+        ftl := tprint("%/installer/FTL.TXT", #filepath);
+        if file_exists(ftl) copy_file(ftl, tprint("%/FTL.TXT", root));
+        else print("Warning: installer/FTL.TXT is missing, so the tarball ships FreeType without the FreeType License (see THIRD_PARTY.md).\n");
+
+        for size: BUNDLE_ICON_SIZES {
+            rgba, ok := icon_rgba(size);
+            if !ok return false;
+            dir := tprint("%1/icons/hicolor/%2x%2/apps", root, size);
+            make_directory_if_it_does_not_exist(dir, recursive = true);
+            path := tprint("%/%.png", dir, APP_ID);
+            if !STB_Image_Write.stbi_write_png(temp_c_string(path), size, size, 4, rgba.data, size * 4) {
+                log_error("Could not write %\n", path);
+                return false;
+            }
+        }
+
+        tarball := tprint("%/%.tar.gz", bin, name);
+        // Owned by root in the archive, so extracting it never asks to keep
+        // the uid of whoever built it.
+        if !run_tool("tar", "--owner=0", "--group=0", "--numeric-owner", "-czf", tarball, "-C", staging, name) {
+            log_error("tar could not make %\n", tarball);
+            return false;
+        }
+        run_tool("rm", "-rf", staging);
+        if !write_sha256_file(tarball) return false;
+        print("Packaged %/%\n", OUTPUT_DIR, path_filename(tarball));
+        return true;
+    }
+
+    // The program's full path, searched for on the PATH like a shell would;
+    // empty if it isn't there.
+    find_program :: (name: string) -> string {
+        path := to_string(POSIX.getenv("PATH"));
+        for dir: split(path, ":",, temp) {
+            if !dir continue;
+            candidate := tprint("%/%", dir, name);
+            if file_exists(candidate) return candidate;
+        }
+        return "";
+    }
+}
+
 // Data (fonts, images) lives in data/ at the repo root; mirror it next to the
-// exe. FreeType is the only runtime DLL.
+// exe. FreeType is the only runtime DLL (on Windows; it links statically on
+// macOS and Linux).
 copy_runtime_files :: () {
     compiler_dir := tprint("%/modules", compiler_get_base_path());
-    #if OS == .WINDOWS {   // FreeType links statically on macOS.
+    #if OS == .WINDOWS {   // FreeType links statically elsewhere.
         DLLS :: string.["freetype/windows/freetype.dll"];
         for DLLS {
             src := tprint("%/%", compiler_dir, it);

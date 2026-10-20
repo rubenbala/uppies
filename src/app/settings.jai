@@ -1,8 +1,9 @@
 // Preferences (plain text, settings.ini) and the access token (token.bin,
 // sealed with platform_protect: DPAPI on Windows, a Keychain key on macOS or
-// a key file in its development builds, so only this user on this machine
-// can read it), in platform_app_data_dir (%APPDATA%/Uppies,
-// ~/Library/Application Support/Uppies, or Uppies Dev). The synced data
+// a key file in its development builds, a keyring key or key file on Linux,
+// so only this user on this machine can read it), in platform_app_data_dir
+// (%APPDATA%/Uppies, ~/Library/Application Support/Uppies or Uppies Dev,
+// ~/.local/share/uppies). The synced data
 // itself is in store.uppies there (see up/store_file.jai).
 
 History_Depth :: enum u8 { ALL; TWO_YEARS; ONE_YEAR; NINETY_DAYS; }

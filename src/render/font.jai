@@ -13,6 +13,7 @@
 Font :: struct {
     id:          u8;
     path:        string;
+    face_index:  int;         // In the file (collections, variable fonts' instances).
     file_data:   string;      // FreeType reads the face from here; keep it alive.
     face:        FT.FT_Face;
     units_per_em: float;
@@ -86,27 +87,46 @@ fonts_shutdown :: () {
     #if OS == .MACOS emoji_shutdown();
 }
 
-// Loads the first font file that exists from candidates, relative paths
-// being relative to the app's resources (the executable's directory, or
-// Contents/Resources in a macOS app bundle).
+// Loads the first font that exists from candidates (see load_font_candidate).
 load_font :: (candidates: [] string) -> *Font {
     for candidates {
-        path := ifx is_absolute_path(it) then it else tprint("%/%", resource_dir, it);
-        if !file_exists(path) continue;
-        font := load_font_file(path);
+        font := load_font_candidate(it);
         if font return font;
     }
     log_error("Could not load any font of %\n", candidates);
     return null;
 }
 
-load_font_file :: (path: string) -> *Font {
+// A font file, relative paths being relative to the app's resources (the
+// executable's directory, or Contents/Resources in a macOS app bundle). On
+// Linux, "fc:" and a fontconfig pattern ("fc:sans-serif:weight=semibold")
+// is the file fontconfig picks for it. Null if there is none.
+load_font_candidate :: (candidate: string) -> *Font {
+    #if OS == .LINUX {
+        if begins_with(candidate, "fc:") {
+            path, face_index, found := platform_find_font(slice(candidate, 3, candidate.count - 3));
+            if !found return null;
+            return load_font_file(path, face_index);
+        }
+    }
+    path := ifx is_absolute_path(candidate) then candidate else tprint("%/%", resource_dir, candidate);
+    if !file_exists(path) return null;
+    return load_font_file(path);
+}
+
+// `face_index` picks a face in a collection (.ttc), and a variable font's
+// named instance in its upper bits (FreeType's convention, and fontconfig's).
+// A face already loaded is shared.
+load_font_file :: (path: string, face_index := 0) -> *Font {
+    for 0..loaded_font_count - 1 {
+        if loaded_fonts[it].path == path && loaded_fonts[it].face_index == face_index return *loaded_fonts[it];
+    }
     if loaded_font_count >= FONT_MAX_FONTS return null;
     data, ok := read_entire_file(path);
     if !ok return null;
 
     face: FT.FT_Face;
-    if FT.FT_New_Memory_Face(ft_library, data.data, xx data.count, 0, *face) != 0 {
+    if FT.FT_New_Memory_Face(ft_library, data.data, xx data.count, xx face_index, *face) != 0 {
         free(data);
         return null;
     }
@@ -115,6 +135,7 @@ load_font_file :: (path: string) -> *Font {
     font.id           = cast(u8) loaded_font_count;
     loaded_font_count += 1;
     font.path         = copy_string(path);
+    font.face_index   = face_index;
     font.file_data    = data;
     font.face         = face;
     font.units_per_em = cast(float) face.units_per_EM;
@@ -122,7 +143,8 @@ load_font_file :: (path: string) -> *Font {
     font.descender    = cast(float) -face.descender;
     font.line_gap     = max((cast(float) face.height) - font.ascender - font.descender, 0.0);
     font.has_kerning  = FT.FT_HAS_KERNING(face);
-    log("Loaded font %\n", path);
+    if face_index log("Loaded font % (face %)\n", path, face_index);
+    else          log("Loaded font %\n", path);
     return font;
 }
 

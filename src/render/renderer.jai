@@ -9,8 +9,8 @@
 //   renderer_render(clear: Color)        draws `draw.instances`
 //   renderer_present()
 //
-// Direct3D 11 on Windows, Metal on macOS; Vulkan (Linux) would take the
-// same draw list and the same shading model.
+// Direct3D 11 on Windows, Metal on macOS, Vulkan on Linux: the same draw
+// list and the same shading model.
 
 Renderer_Stats :: struct {
     instances:     int;
@@ -29,4 +29,6 @@ renderer_settings: Renderer_Settings;
     #load "d3d11/renderer_d3d11.jai";
 } else #if OS == .MACOS {
     #load "metal/renderer_metal.jai";
+} else #if OS == .LINUX {
+    #load "vulkan/renderer_vulkan.jai";
 }

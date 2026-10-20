@@ -4,8 +4,8 @@
 //
 // Everything OS-specific lives behind this file. The rest of the app only
 // sees `platform` and `input` and the procedures declared here; each OS
-// provides them in its own file (platform_windows.jai, platform_macos.jai;
-// later platform_linux.jai).
+// provides them in its own file (platform_windows.jai, platform_macos.jai,
+// platform_linux.jai).
 //
 // All positions and sizes here are physical pixels. `platform.dpi_scale` is
 // the monitor's scale (1 at 96 DPI, 1.5 at 144 DPI...); the UI multiplies its
@@ -180,6 +180,8 @@ AES_TAG_SIZE   :: 16;
     #load "platform_windows.jai";
 } else #if OS == .MACOS {
     #load "platform_macos.jai";
+} else #if OS == .LINUX {
+    #load "platform_linux.jai";
 } else {
-    #assert false "Uppies runs on Windows and macOS; a Linux platform layer comes next.";
+    #assert false "Uppies runs on Windows, macOS and Linux.";
 }

@@ -122,13 +122,34 @@ fonts: Fonts;
     FONT_LIGHT_CANDIDATES    :: string.["data/fonts/ui-light.ttf",    "/System/Library/Fonts/SFNS.ttf"];
     FONT_MONO_CANDIDATES     :: string.["data/fonts/ui-mono.ttf",     "/System/Library/Fonts/SFNSMono.ttf", "/System/Library/Fonts/Menlo.ttc"];
     // No macOS font has the Segoe MDL2 icons: they are drawn as Unicode
-    // symbols instead (MAC_ICON_SYMBOLS), mostly from Apple Symbols, the
+    // symbols instead (SYMBOL_ICONS), mostly from Apple Symbols, the
     // rest from the fallbacks. An icon font in data/fonts/ui-icons.ttf is
     // taken to use the MDL2 code points, as on Windows.
     FONT_ICON_CANDIDATES     :: string.["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/SFNS.ttf"];
     FONT_ICON_MDL2           :: "data/fonts/ui-icons.ttf";
     FONT_NUMERIC_CANDIDATES  :: string.["data/fonts/ui-numeric.ttf",  "/System/Library/Fonts/SFNS.ttf"];
     FONT_FALLBACK_CANDIDATES :: string.["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Menlo.ttc"];
+} else #if OS == .LINUX {
+    // "fc:" asks fontconfig for the desktop's choice (sans-serif is what the
+    // desktop's settings call the default font); then where Noto Sans and
+    // DejaVu Sans live on Debian and Ubuntu, Fedora and Arch.
+    FONT_REGULAR_CANDIDATES  :: string.["data/fonts/ui-regular.ttf", "fc:sans-serif",
+                                        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+                                        "/usr/share/fonts/google-noto-vf/NotoSans[wght].ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                        "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"];
+    FONT_SEMIBOLD_CANDIDATES :: string.["data/fonts/ui-semibold.ttf", "fc:sans-serif:weight=semibold",
+                                        "/usr/share/fonts/truetype/noto/NotoSans-SemiBold.ttf", "/usr/share/fonts/noto/NotoSans-SemiBold.ttf",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"];
+    FONT_LIGHT_CANDIDATES    :: string.["data/fonts/ui-light.ttf", "fc:sans-serif:weight=light"];
+    FONT_MONO_CANDIDATES     :: string.["data/fonts/ui-mono.ttf", "fc:monospace",
+                                        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/TTF/DejaVuSansMono.ttf"];
+    // No Linux font has the Segoe MDL2 icons either: Unicode symbols stand
+    // in for them as on macOS, from DejaVu Sans, the rest from the fallbacks.
+    FONT_ICON_CANDIDATES     :: string.["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                                        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", "fc:DejaVu Sans"];
+    FONT_ICON_MDL2           :: "data/fonts/ui-icons.ttf";
+    FONT_NUMERIC_CANDIDATES  :: string.["data/fonts/ui-numeric.ttf", "fc:sans-serif:weight=semibold"];
+    FONT_FALLBACK_CANDIDATES :: string.["fc:Noto Sans Symbols2", "fc:Noto Sans Symbols", "fc:Noto Sans Math", "fc:DejaVu Sans"];
 }
 
 theme_load_fonts :: () -> bool {
@@ -136,7 +157,7 @@ theme_load_fonts :: () -> bool {
     fonts.semibold = load_font(FONT_SEMIBOLD_CANDIDATES);
     fonts.light    = load_font(FONT_LIGHT_CANDIDATES);
     fonts.mono     = load_font(FONT_MONO_CANDIDATES);
-    #if OS == .MACOS {
+    #if OS != .WINDOWS {
         icons_are_mdl2 = file_exists(tprint("%/%", resource_dir, FONT_ICON_MDL2));
         fonts.icons = ifx icons_are_mdl2 then load_font(.[FONT_ICON_MDL2]) else load_font(FONT_ICON_CANDIDATES);
     } else {
@@ -149,18 +170,16 @@ theme_load_fonts :: () -> bool {
     if !fonts.mono     fonts.mono     = fonts.regular;
     if !fonts.numeric  fonts.numeric  = fonts.semibold;
     // Each fallback is tried in order for code points the UI font lacks.
-    for FONT_FALLBACK_CANDIDATES {
-        path := it;
-        if file_exists(path) fonts_add_fallback(load_font_file(path));
-    }
+    for FONT_FALLBACK_CANDIDATES fonts_add_fallback(load_font_candidate(it));
+    #if OS != .WINDOWS resolve_symbol_icons();
     return true;
 }
 
 // The code point that draws an icon in fonts.icons.
 icon_code_point :: (icon: Icon) -> u32 {
-    #if OS == .MACOS {
+    #if OS != .WINDOWS {
         if !icons_are_mdl2 {
-            for MAC_ICON_SYMBOLS if it.icon == icon return it.code_point;
+            for SYMBOL_ICONS if it.icon == icon return symbol_icon_code_points[it_index];
             return 0;
         }
     }
@@ -168,10 +187,10 @@ icon_code_point :: (icon: Icon) -> u32 {
 }
 
 // How much larger icons are drawn than asked: the Unicode symbols standing
-// in for MDL2 on macOS are drawn smaller within their em square.
+// in for MDL2 on macOS and Linux are drawn smaller within their em square.
 icon_scale :: () -> float {
-    #if OS == .MACOS {
-        if !icons_are_mdl2 return MAC_ICON_SCALE;
+    #if OS != .WINDOWS {
+        if !icons_are_mdl2 return SYMBOL_ICON_SCALE;
     }
     return 1;
 }
@@ -219,13 +238,14 @@ Icon :: enum u32 {
     DOWNLOAD       :: 0xE896;
 }
 
-#if OS == .MACOS {
+#if OS != .WINDOWS {
     icons_are_mdl2: bool;   // fonts.icons came from data/fonts/ui-icons.ttf.
-    MAC_ICON_SCALE :: 1.4;
+    SYMBOL_ICON_SCALE :: 1.4;
 
-    // Each icon's stand-in among the symbols macOS's fonts have (outlines
-    // only: Apple Color Emoji is bitmaps, which the glyph cache can't draw).
-    MAC_ICON_SYMBOLS :: struct { icon: Icon; code_point: u32; }.[
+    // Each icon's stand-in among the symbols macOS's and Linux's fonts have
+    // (outlines only: color emoji fonts are bitmaps, which the glyph cache
+    // can't draw).
+    SYMBOL_ICONS :: struct { icon: Icon; code_point: u32; }.[
         .{.REFRESH,       0x21BB},   // ↻
         .{.SETTINGS,      0x2699},   // ⚙
         .{.SEARCH,        0x2315},   // ⌕
@@ -265,4 +285,37 @@ Icon :: enum u32 {
         .{.PRINT,         0x2399},   // ⎙
         .{.DOWNLOAD,      0x2913},   // ⤓
     ];
+
+    // Stand-ins for the stand-ins, where the fonts lack the first choice
+    // (Linux's DejaVu and Noto have no ＋ or ⧉).
+    SYMBOL_ICON_ALTERNATIVES :: struct { code_point: u32; alternative: u32; }.[
+        .{0x29C9, 0x2750},   // ⧉ ❐
+        .{0x2315, 0x26B2},   // ⌕ ⚲
+        .{0xFF0B, 0x002B},   // ＋ +
+        .{0x2317, 0x0023},   // ⌗ #
+        .{0x2398, 0x2750},   // ⎘ ❐
+        .{0x2913, 0x21E9},   // ⤓ ⇩
+    ];
+
+    // Where Linux's fonts draw the shared choice badly: DejaVu's ⌫ is twice
+    // as wide as it is tall.
+    LINUX_SYMBOL_ICONS :: struct { icon: Icon; code_point: u32; }.[
+        .{.DELETE, 0x1F5D1},   // 🗑 (Noto Sans Symbols2)
+    ];
+
+    symbol_icon_code_points: [SYMBOL_ICONS.count] u32;
+
+    // Each icon's code point: its first choice if the fonts have it.
+    resolve_symbol_icons :: () {
+        for icon: SYMBOL_ICONS {
+            code_point := icon.code_point;
+            #if OS == .LINUX {
+                for LINUX_SYMBOL_ICONS if it.icon == icon.icon && font_has_glyph(fonts.icons, it.code_point) code_point = it.code_point;
+            }
+            if !font_has_glyph(fonts.icons, code_point) {
+                for SYMBOL_ICON_ALTERNATIVES if it.code_point == code_point code_point = it.alternative;
+            }
+            symbol_icon_code_points[it_index] = code_point;
+        }
+    }
 }

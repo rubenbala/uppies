@@ -49,3 +49,12 @@ On macOS, FreeType is linked into the executable statically (same license and no
 Uppies uses the fonts that come with macOS (SF Pro, SF Mono, Apple Symbols, Menlo) from
 `/System/Library/Fonts`, and the system frameworks (AppKit, Foundation, CoreFoundation, Metal,
 Security, and CommonCrypto in libSystem). None of these are redistributed.
+
+## Linux
+
+On Linux, FreeType is linked into the executable statically (same license and notice as above;
+the tarball includes `FTL.TXT`). Uppies uses the fonts already installed (whatever fontconfig
+picks, usually Noto Sans, Noto Sans Symbols and Math, and DejaVu Sans) and the system's own
+libraries: libX11, the Vulkan loader and driver, libcurl, OpenSSL's libcrypto, libsecret and
+GLib, fontconfig and libXrandr. It loads them from the system at run time; none of them are
+redistributed.

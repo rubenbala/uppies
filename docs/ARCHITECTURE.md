@@ -3,31 +3,36 @@
 ## Layout
 
 ```
-build.jai                    Build metaprogram (debug / release / run); compiles HLSL / Metal shaders
+build.jai                    Build metaprogram (debug / release / run / bundle); compiles HLSL / Metal / GLSL shaders
 src/main.jai                 Entry point, frame loop, frame clock
 src/core/                    Rects and rect cutting, sRGB colors, damping, springs, easing
 src/platform/                Window, input, cursor, OS services
     platform.jai             The platform API + shared input state (OS independent)
     platform_windows.jai     Win32 implementation
     platform_macos.jai       Cocoa implementation
+    platform_linux.jai       X11 (Xlib) implementation
+    linux_dl.jai             Linux: libraries loaded at run time (dlopen)
 src/render/                  Everything that turns a frame into pixels
     draw.jai                 The draw list: one 96-byte instance per primitive
     font.jai                 FreeType glyph cache + shelf-packed atlas
     renderer.jai             Backend interface, stats, settings
     d3d11/                   Direct3D 11 backend + its shader (ui.hlsl)
     metal/                   Metal backend + its shader (ui.metal, a port of ui.hlsl)
+    vulkan/                  Vulkan backend + its shader (ui.glsl, a port of ui.metal)
 src/core/json.jai            JSON parser (tree) and string escaping
 src/core/pdf.jai             PDF writer: pages of text, lines, rectangles and paths in the standard fonts
 src/core/time.jai            Civil dates, RFC 3339 timestamps, formatting
 src/core/format.jai          Money (integer cents) and number formatting
 src/net/http_windows.jai     HTTPS over WinHTTP (synchronous; called from worker threads)
 src/net/http_macos.jai       HTTPS over NSURLSession (synchronous; called from worker threads)
+src/net/http_linux.jai       HTTPS over libcurl (synchronous; called from worker threads)
 src/up/                      The Up API: model + parsing, store, encrypted store file, threaded client, sample data
 src/ui/                      Immediate-mode widgets (focus, text input, popups, scrolling, tooltips), theme
     themes.jai               Theme files: the TOML subset, the list of themes, switching and its fade
 src/app/                     The console: sync engine, analytics, recurring payments, pages, charts, inspector, printing, test scripts
 data/                        Mirrored next to the exe (fonts go in data/fonts/)
-assets/icon.png              256 px icon master; build.jai turns it into the exe's icon
+assets/icon.png              256 px icon master; build.jai turns it into the exe's icon (and Linux's)
+installer/                   Inno Setup script (Windows); linux/install.sh for the Linux tarball
 themes/                      The built-in themes (TOML), embedded at build time; README.md is the format
 ```
 
@@ -101,6 +106,22 @@ buffers are a ring of three, one per frame the GPU may still be reading. `build.
 Toolchain component once (`xcodebuild -downloadComponent MetalToolchain`). The executable is
 linked with Apple's `ld`, since Jai's bundled lld can't read the macOS 27 SDK's library stubs.
 
+**Vulkan (Linux)** draws the same instances with the same shading (`vulkan/ui.glsl` is a port of
+`ui.metal`; build.jai compiles it with glslc, once per stage, and embeds the SPIR-V as `u32`
+arrays). The instance array is the vertex buffer stepped per instance, as on D3D11, so a growing
+buffer needs no descriptor update. One render pass clears and draws into the swapchain image
+(B8G8R8A8_UNORM, blended in sRGB like the others). Three frames are in flight, each with its own
+command buffer, fence, instance buffer, atlas staging buffer and descriptor set; atlas rows are
+copied in the frame's command buffer, and a replaced atlas image is destroyed when its slot comes
+round again. `renderer_wait_for_frame` is `vkWaitForPresentKHR` on the frame before the last
+(VK_KHR_present_wait: the counterpart of the latency waitable); without it, or while the window
+isn't presenting, it waits on that frame's fence. Vsync is FIFO; without it, IMMEDIATE (tearing,
+variable refresh) or MAILBOX. A lost device is recreated from CPU-side state. `libvulkan.so.1` is
+loaded at run time and every procedure comes through `vkGetInstanceProcAddr`; the structs newer
+than the Jai module's headers (Xlib surface, present id and wait) are declared in the backend.
+The integrated GPU is preferred, as on the other platforms; `DRI_PRIME` or `UPPIES_GPU` choose
+another.
+
 Why D3D11 and not D3D12: D3D12's advantages are cheap submission of many draws and explicit
 multithreading. At one draw per frame neither applies, while presentation, which does
 matter, is identical (same DXGI). The backend sits behind a five-procedure interface
@@ -117,7 +138,7 @@ glyphs; if it ever fills, it is cleared at the start of the next frame, never mi
 A DPI change clears the cache so glyphs re-rasterize at the new sizes.
 
 Fonts: `data/fonts/ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf` if present (Inter is
-a good choice), otherwise Segoe UI from the system.
+a good choice), otherwise the system's: Segoe UI, SF Pro, or what fontconfig calls `sans-serif`.
 
 ## UI
 
@@ -178,14 +199,41 @@ also makes `bin/Uppies.app`: the executable, `data/` in `Contents/Resources` (fo
 It then puts the app beside a link to `/Applications` in `bin/Uppies-<version>-mac.dmg` (`hdiutil`),
 with a `.sha256` beside it, as the Windows installer has.
 
-To add Linux:
+**Linux** (`platform_linux.jai`): an Xlib window, which also runs on Wayland desktops through
+XWayland. The executable links only libc and libX11; Vulkan, libcurl, OpenSSL's libcrypto,
+libsecret (with GLib), fontconfig and libXrandr are opened with `dlopen` by their versioned
+sonames (`linux_dl.jai` fills a struct of procedure pointers named after the symbols), so building
+needs no -dev packages for them and a missing one turns its feature off instead of stopping the
+app. The Vulkan surface uses an X connection of its own, so the driver's threads never read the
+events of the one the main loop sleeps on: `poll()` on that connection and an eventfd, which
+`platform_wake` writes from any thread (Xlib is only called on the main thread). There is no modal
+loop: resizes arrive as ordinary events. Until the first frame, the window's background pixel is
+near the theme's, so it never flashes white. The scale is `Xft.dpi` / 96 (followed live through
+the root window's RESOURCE_MANAGER) or `UPPIES_SCALE`; the refresh rate is the XRandR mode of the
+monitor under the window. Keys map from keysyms to the shared `Key`, falling back to the key's
+place on a US keyboard for layouts without Latin letters, so Ctrl shortcuts work everywhere;
+text comes through the input method (`Xutf8LookupString`). Modifier state rides on every event,
+so modifiers changed while another window had the keyboard are corrected. The clipboard is
+ours to serve (X keeps none): Uppies answers `SelectionRequest` while it owns CLIPBOARD, reads
+others' with a bounded wait that leaves other events queued, and hands its text to a clipboard
+manager on exit. Fonts are what fontconfig picks for `sans-serif` and `monospace` (with the face
+index, for variable fonts and collections); icons are the same Unicode stand-ins as on macOS,
+from DejaVu Sans and the Noto symbol fonts, with alternatives where those lack the first choice.
 
-1. `src/platform/platform_linux.jai`: window, event pump, wait for events, DPI scale, cursor;
-   `#load` it in `platform.jai`.
-2. `src/render/vulkan/`: the five renderer procedures and a port of `ui.hlsl` (the instance
-   layout and shading model stay the same); `#load` in `renderer.jai`.
-3. Font candidate paths for the platform's UI font in `ui/theme.jai`.
-4. Shader compilation for that backend in `build.jai`.
+HTTPS is libcurl, with a pool of easy handles reused across requests (connections and TLS
+sessions stay warm). AES-256-GCM is OpenSSL's EVP; `platform_protect` uses macOS's layout under a
+32-byte key kept in the Secret Service (the login keyring) or, without one, in `local.key`
+(0600); once that file exists it wins, and a new key is never made while anything sealed with
+an old one is still there. Data lives in `$XDG_DATA_HOME/uppies` (`~/.local/share/uppies`,
+0700). Links and folders open with `xdg-open` (double-forked, so it outlives nothing and leaves no
+zombie); the Save dialog is `zenity` or `kdialog`, run while X events keep being answered.
+`jai build.jai - bundle` makes `bin/Uppies-<version>-linux-x86_64.tar.gz`: the executable, data/,
+hicolor icons, and `install.sh`, which installs into `~/.local` with a desktop entry
+(`au.net.ruben.uppies`, `StartupWMClass=Uppies`, matching the window's WM_CLASS).
+
+To add another platform (native Wayland, say): its platform file `#load`ed in `platform.jai`, a
+renderer backend in `renderer.jai` (or Vulkan with that platform's surface), font candidates in
+`ui/theme.jai`, and its shader build in `build.jai`.
 
 ## Data flow
 
@@ -215,7 +263,7 @@ parsing, errors and writes all run the real code.
 
 **Local data.** `up/store_file.jai` saves the store to `%APPDATA%/Uppies/store.uppies`
 (`~/Library/Application Support/Uppies` on macOS, where CommonCrypto and the Keychain key take
-the place of CNG and DPAPI), a format
+the place of CNG and DPAPI; `~/.local/share/uppies` on Linux, OpenSSL and the keyring key), a format
 of our own: a small authenticated header (magic, version, DPAPI-wrapped key, nonce), then the
 payload as varint-encoded records (accounts, categories, tags, transactions referring to them by
 index, plus sync state), encrypted with AES-256-GCM (Windows CNG). The key is new on every save

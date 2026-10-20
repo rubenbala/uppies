@@ -9,7 +9,7 @@ Uppies is a desktop app for people who bank with [Up](https://up.com.au). It's m
 a utility rather than a sleek, minimal banking app. That means lots of information on screen at
 once, tables you can search and sort, and keyboard shortcuts for the things you do most.
 
-Uppies runs on Windows and Mac, and a Linux version is coming soon.
+Uppies runs on Windows, Mac and Linux.
 
 It's quick, too. Uppies is written from scratch rather than wrapped around a web page, opens
 straight onto your saved data, and uses no CPU at all while you're just looking at it.
@@ -49,16 +49,18 @@ delivery logs.
 
 ## Getting started
 
-Uppies runs on Windows 10 and 11, and on Apple silicon Macs with macOS 13 or newer. Linux is
-coming soon.
+Uppies runs on Windows 10 and 11, on Apple silicon Macs with macOS 13 or newer, and on 64-bit
+Linux (Ubuntu 22.04, Debian 12, Fedora 35 or newer, or anything with glibc 2.34 and a Vulkan
+driver) in an X11 or Wayland session.
 
 1. Download Uppies from the [latest release](https://github.com/rubenbala/uppies/releases/latest):
-   the installer for Windows, or the disk image (`.dmg`) for Mac. On a Mac, open the disk image
-   and drag Uppies into Applications.
+   the installer for Windows, the disk image (`.dmg`) for Mac, or the `.tar.gz` for Linux. On a
+   Mac, open the disk image and drag Uppies into Applications. On Linux, unpack the archive and
+   run `./install.sh` in it: Uppies appears in your applications menu (nothing needs root).
 2. Make a personal access token at [api.up.com.au](https://api.up.com.au/getting_started). This is
    what lets Uppies read your account.
-3. Open Uppies and paste the token in. Tick **Remember on this PC** (or **this Mac**) if you don't
-   want to paste it again next time.
+3. Open Uppies and paste the token in. Tick **Remember on this PC** (or **this Mac**, or **this
+   computer**) if you don't want to paste it again next time.
 
 Just want a look first? Choose **Explore with sample data** and you can try everything with a
 made-up account, without connecting to Up at all.
@@ -68,8 +70,8 @@ Uppies is new and isn't code-signed yet. Click **More info**, then **Run anyway*
 
 Each download has a `.sha256` file next to it on the release page, holding its SHA-256 checksum.
 To check your download is exactly the one released, compare that with what
-`Get-FileHash Uppies-1.0.2-setup.exe` prints in PowerShell, or `shasum -a 256 Uppies-1.0.2-mac.dmg`
-in the Mac's Terminal.
+`Get-FileHash Uppies-1.0.2-setup.exe` prints in PowerShell, `shasum -a 256 Uppies-1.0.2-mac.dmg`
+in the Mac's Terminal, or `sha256sum -c Uppies-1.0.2-linux-x86_64.tar.gz.sha256` on Linux.
 
 ## Your money and your privacy
 
@@ -78,10 +80,12 @@ transaction's category or tags.
 
 Your token is only ever sent to Up (`api.up.com.au`). If you ask Uppies to remember it, it's
 stored encrypted so that only your user account on your computer can read it. On Windows that's
-done by Windows itself; on a Mac, the key is kept in your Keychain.
+done by Windows itself; on a Mac, the key is kept in your Keychain; on Linux, in your login
+keyring (GNOME Keyring or KWallet), or, on a desktop without one, in a file only you can read.
 
 To open quickly, Uppies keeps a copy of your transactions on your computer, in
-`%APPDATA%\Uppies` on Windows or `~/Library/Application Support/Uppies` on a Mac. That copy is
+`%APPDATA%\Uppies` on Windows, `~/Library/Application Support/Uppies` on a Mac or
+`~/.local/share/uppies` on Linux. That copy is
 encrypted too, and only opens with your user account and your token. If the file has been
 tampered with or damaged, Uppies throws it away and downloads your data again.
 
@@ -121,6 +125,10 @@ left off.
 On a Mac, drag Uppies to the Bin. Your data stays in `~/Library/Application Support/Uppies`
 until you delete that folder (or use **Delete local data** in Settings first).
 
+On Linux, run `./install.sh --uninstall` from the folder you installed from (or
+`~/.local/lib/uppies` is the app, if that folder is gone). Your data stays in
+`~/.local/share/uppies` until you delete it.
+
 ## Found a problem?
 
 Please [open an issue](https://github.com/rubenbala/uppies/issues). Never include your token, any
@@ -134,7 +142,7 @@ Uppies is written in a beta programming language by Jonathan Blow, commonly know
 beta access and `jai` on your PATH.
 
 ```bash
-jai build.jai                 # debug build: bin/uppies.exe
+jai build.jai                 # debug build: bin/uppies.exe (bin/uppies on Mac and Linux)
 jai build.jai - release       # optimised build, no console window
 jai build.jai - run           # build, then launch
 jai build.jai - bundle        # release build plus the installer: bin/Uppies-<version>-setup.exe
@@ -168,6 +176,31 @@ Development builds (debug builds, and release builds run from `bin/`) don't use 
 They keep their key in a file in `~/Library/Application Support/Uppies Dev`, separate from the
 real app's data. That's less secure, so use `Uppies.app` for your real account.
 
+### Linux
+
+The same commands build a Vulkan version for x86-64 Linux. Besides the compiler, you'll need
+libX11's development files and a GLSL compiler for the shaders:
+
+```bash
+sudo apt install libx11-dev glslc                  # Debian, Ubuntu, Mint
+sudo dnf install libX11-devel glslc                # Fedora
+sudo pacman -S libx11 shaderc                      # Arch
+jai build.jai - bundle   # also makes bin/Uppies-<version>-linux-x86_64.tar.gz
+```
+
+Everything else (Vulkan, libcurl, OpenSSL's libcrypto, libsecret, fontconfig, XRandR) is loaded
+when the app starts, so the executable links only libc and libX11 and runs on any distribution
+that has those. The tarball holds the executable, its icons, and
+[installer/linux/install.sh](installer/linux/install.sh), which installs it for the user.
+Install `vulkan-validationlayers` and debug builds check their Vulkan calls too.
+
+Uppies keeps its key in the login keyring through the Secret Service whenever one is running
+(GNOME Keyring, KWallet), development builds included, and otherwise in `local.key` in its data
+folder. Once that file exists it is always used, so data is never split between two keys.
+`UPPIES_SCALE=1.5` overrides the display scale (normally your desktop's text scaling, Xft.dpi),
+and `UPPIES_GPU=intel` picks the graphics card by name. Uppies uses the integrated GPU by
+default, or the one `DRI_PRIME` picks. Saving PDFs asks where with `zenity` (or `kdialog` on KDE).
+
 ### Command-line options
 
 These are mostly for testing. Scripted and timed runs never touch your saved token or settings.
@@ -187,7 +220,9 @@ they only work in builds made without `bundle`.
 ### Fonts
 
 Uppies uses fonts that come with Windows: Segoe UI for text, Cascadia Mono (or Consolas) for IDs
-and times, Bahnschrift for the big numbers and Segoe MDL2 Assets for icons. To use your own,
+and times, Bahnschrift for the big numbers and Segoe MDL2 Assets for icons. On a Mac it uses SF
+Pro and SF Mono, and on Linux your desktop's fonts (whatever fontconfig calls `sans-serif` and
+`monospace`, usually Noto Sans or DejaVu), with icons drawn from Unicode symbols. To use your own,
 put `ui-regular.ttf`, `ui-semibold.ttf`, `ui-light.ttf`, `ui-mono.ttf` or `ui-numeric.ttf` in
 `data/fonts/`.
 
