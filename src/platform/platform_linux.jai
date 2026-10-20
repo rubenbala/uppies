@@ -156,7 +156,7 @@ platform_window_menu :: (x: float, y: float) {
 // Opens a web address in the browser, or a folder in the file manager,
 // through xdg-open. Only https addresses and absolute paths are opened.
 platform_open_url :: (url: string) {
-    if !begins_with(url, "https://") && !begins_with(url, "http://") && !begins_with(url, "/") return;
+    if !begins_with(url, "https://") && !begins_with(url, "/") return;
     if !spawn_detached(.["xdg-open", url]) log_error("Could not run xdg-open for %\n", url);
 }
 
@@ -598,12 +598,14 @@ protect_mutex:  POSIX.pthread_mutex_t;   // Zero is PTHREAD_MUTEX_INITIALIZER on
 
 Key_Store :: enum u8 { KEYRING; FILE; }
 
-// Which store the key is in (or will be): local.key once it exists, so data
-// never splits between two keys; else the keyring when there is one. Sets
-// what the UI calls it.
+// Which store the key is in (or will be): local.key while it exists, so data
+// never splits between two keys (key_file_migrate moves it to the keyring
+// when it can); else the keyring when libsecret is installed. Whether a
+// session bus is there is libsecret's to find out (DBUS_SESSION_BUS_ADDRESS,
+// or $XDG_RUNTIME_DIR/bus without it). Sets what the UI calls it.
 protect_choose_store :: () -> Key_Store {
     store := Key_Store.FILE;
-    if !file_exists(key_file_path()) && POSIX.getenv("DBUS_SESSION_BUS_ADDRESS") && secret_load() store = .KEYRING;
+    if !file_exists(key_file_path()) && secret_load() store = .KEYRING;
     if store == .FILE {
         PLATFORM_SECRET_STORE = "a key file only you can read";
         PLATFORM_TOKEN_STORED = "Encrypted with a key in a file only you can read";
@@ -628,9 +630,10 @@ protect_load_key :: () -> bool {
         } else if !error {
             ok = make_key(*protect_key, keyring_store);
         } else if !anything_sealed() {
-            // A keyring that is there but doesn't work (no Secret Service
-            // running behind the bus): a key file, while nothing needs the
-            // keyring's key.
+            // A keyring that is there but doesn't work (no session bus, no
+            // Secret Service running behind it yet): a key file, while
+            // nothing needs the keyring's key, until key_file_migrate can
+            // move it.
             log("The keyring is not available (%); keeping the key in a file.\n", error);
             ok = key_file_load(*protect_key);
             protect_choose_store();
@@ -639,6 +642,7 @@ protect_load_key :: () -> bool {
         }
     } else {
         ok = key_file_load(*protect_key);
+        if ok key_file_migrate(*protect_key);
     }
     if !ok {
         memset(protect_key.data, 0, protect_key.count);
@@ -675,6 +679,7 @@ key_file_path :: () -> string { return tprint("%/local.key", platform_app_data_d
 key_file_load :: (key: *[AES_KEY_SIZE] u8) -> bool {
     path := key_file_path();
     data, ok := read_entire_file(path,, temp);
+    defer if data.count memset(data.data, 0, data.count);   // Don't leave the key in temporary storage.
     if ok {
         // Never replace a key file we couldn't use.
         if data.count != AES_KEY_SIZE return false;
@@ -683,6 +688,45 @@ key_file_load :: (key: *[AES_KEY_SIZE] u8) -> bool {
     }
     if file_exists(path) return false;
     return make_key(key, (key: *[AES_KEY_SIZE] u8) -> bool { return platform_write_file_atomic(key_file_path(), key.*); });
+}
+
+// A key that went to local.key because there was no keyring then (no
+// session bus yet, a keyring not yet running) moves into the keyring once
+// there is one. It is the same key, so nothing sealed with it changes. Never
+// over a different key already in the keyring: that one may seal another
+// data folder (-data-dir). Anything short of a key read back intact leaves
+// local.key as it was, to try again next time.
+key_file_migrate :: (key: *[AES_KEY_SIZE] u8) {
+    if !secret_load() return;
+    stored: [AES_KEY_SIZE] u8;
+    defer memset(stored.data, 0, stored.count);
+    found, error := keyring_read(*stored);
+    if error return;   // No keyring to move to (yet).
+    if found {
+        // Ours already, from a move that stopped before removing the file.
+        if memcmp(stored.data, key.data, AES_KEY_SIZE) != 0 return;
+    } else {
+        if !keyring_store(key) return;
+        found, error = keyring_read(*stored);
+        if !found || memcmp(stored.data, key.data, AES_KEY_SIZE) != 0 return;
+    }
+
+    // Unlinked first, then overwritten through the open file: a failure
+    // in between can't leave a zeroed key file where the key used to be.
+    path := temp_c_string(key_file_path());
+    fd := POSIX.open(path, POSIX.O_WRONLY | POSIX.O_CLOEXEC);
+    if POSIX.unlink(path) != 0 {
+        if fd >= 0 POSIX.close(fd);
+        return;
+    }
+    if fd >= 0 {
+        zeros: [AES_KEY_SIZE] u8;
+        POSIX.write(fd, zeros.data, AES_KEY_SIZE);
+        POSIX.fsync(fd);
+        POSIX.close(fd);
+    }
+    log("Moved Uppies' key from local.key into your login keyring.\n");
+    protect_choose_store();
 }
 
 // The Secret Service through libsecret. The key is stored as hex: secrets
